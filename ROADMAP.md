@@ -10,7 +10,7 @@
 3. **Native reference run.** Record the original `gamemd.exe` under offstage at
    the console for the same seconds of startup, as ground truth to compare
    frames against.
-4. **Upstream the disasm32 padding fix** (pcrecomp `fix/disasm32-padding-entries`)
+4. **Upstream the disasm32 padding fix** (pcrecomp #32)
    and re-check the titles that use disasm32 for regressions.
 5. **Setup.cmd** end to end from a clean folder, then the shortcut.
 

@@ -34,4 +34,4 @@ versions follow [SemVer](https://semver.org/).
   game's own `Lock`; it now copies the frame out first.
 - 66 functions missing from the catalog, among them a static constructor,
   because their catalog entry started in the alignment padding before them.
-  Fixed in pcrecomp (`fix/disasm32-padding-entries`).
+  Fixed in pcrecomp #32.

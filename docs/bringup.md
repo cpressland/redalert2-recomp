@@ -85,7 +85,7 @@ behind it; `0x0045B110`, one of the 13 constructors in 1, is another.
 
 Fix (toolkit): disasm32 moves a candidate whose bytes up to the next 16-byte
 boundary are all `nop`/`int3` to that boundary
-(pcrecomp `fix/disasm32-padding-entries`).
+(pcrecomp #32).
 
 ## 5. The intro video is centred on the real desktop
 
