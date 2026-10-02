@@ -24,6 +24,8 @@
 extern const uint32_t ra2_entry_va;    /* recomp_dispatch.c */
 
 #define RA2_IMAGE_BASE 0x00400000u
+/* A NULL module is the process exe, which is the host; mean the guest. */
+#define GUEST_MODULE(h) ((h) ? (h) : RA2_IMAGE_BASE)
 
 static DWORD g_watchdog_s;
 static int   g_headless;
@@ -52,12 +54,25 @@ static void shim_MessageBoxA(void) {
     g_esp += 4 + 4 * 4;
 }
 
+/* The game's windows are real but never on any screen. A hidden window gets
+ * no WM_PAINT, and RA2's menus are dialogs whose controls the game paints
+ * itself: hidden, the main menu showed its frame and no buttons (bringup.md,
+ * 10). So a top-level window is layered at alpha 0, click-through, never
+ * activated and kept off the taskbar: Windows treats it as visible and paints
+ * it, and nothing appears on the screen or takes over an RDP session. */
+#define HL_EXSTYLE (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
+
 static void shim_CreateWindowExA(void) {
-    HWND h = CreateWindowExA(ARG(0), (LPCSTR)(uintptr_t)ARG(1), (LPCSTR)(uintptr_t)ARG(2),
-                             ARG(3) & ~WS_VISIBLE, (int)ARG(4), (int)ARG(5), (int)ARG(6),
-                             (int)ARG(7), (HWND)(uintptr_t)ARG(8), (HMENU)(uintptr_t)ARG(9),
+    uint32_t style = ARG(3);
+    HWND parent = (HWND)(uintptr_t)ARG(8);
+    int top = !parent || !(style & WS_CHILD);
+    HWND h = CreateWindowExA(ARG(0) | (top ? HL_EXSTYLE : 0), (LPCSTR)(uintptr_t)ARG(1),
+                             (LPCSTR)(uintptr_t)ARG(2), style & ~WS_VISIBLE, (int)ARG(4), (int)ARG(5),
+                             (int)ARG(6), (int)ARG(7), parent, (HMENU)(uintptr_t)ARG(9),
                              (HINSTANCE)(uintptr_t)ARG(10), (LPVOID)(uintptr_t)ARG(11));
-    fprintf(stderr, "[headless] CreateWindowExA(\"%s\", %dx%d) from sub_%08X -> hidden hwnd %p\n",
+    if (h && top) SetLayeredWindowAttributes(h, 0, 0, LWA_ALPHA);
+    if (h && (style & WS_VISIBLE)) ShowWindow(h, SW_SHOWNOACTIVATE);
+    fprintf(stderr, "[headless] CreateWindowExA(\"%s\", %dx%d) from sub_%08X -> invisible hwnd %p\n",
             gstr(ARG(2)), (int)ARG(6), (int)ARG(7), g_cur_func, (void*)h);
     if (!g_game_hwnd) g_game_hwnd = h;
     g_eax = (uint32_t)(uintptr_t)h;
@@ -84,21 +99,82 @@ static void shim_GetSystemMetrics(void) {
     g_esp += 4 + 1 * 4;
 }
 
-/* Headless movies play without sound. With it, the intro froze for good
- * about 40 s in, in both runs; without it, it froze once at ~110 s and once
- * not at all in 150 s. So sound makes a stall in Bink's pacing reliable rather
- * than causing it. docs/bringup.md, 6.
- * ponytail: this narrows the stall, it does not fix it; find why Bink stops
- * advancing, then record the audio too. */
-static void shim_BinkSetSoundSystem(void) {
-    fprintf(stderr, "[headless] BinkSetSoundSystem refused: movies play silent\n");
-    g_eax = 0;
-    g_esp += 4 + 2 * 4;
+/* Focus. The window procedure keeps GameInFocus (0x00A8ED80) from the wParam
+ * of activation messages, and the movie player calls BinkPause(1) while it is
+ * clear: a hidden window is never the foreground one, so whenever Windows
+ * said so the movie froze for good, at a moment that depended on timing
+ * (bringup.md, 7). Headless, the game's window is always the active one, as
+ * a fullscreen game in front is: its window procedure is wrapped to see every
+ * activation message as "active", and the focus queries answer its window. */
+#define MAX_CLASSES 8
+static struct { ATOM atom; uint32_t proc; } g_classes[MAX_CLASSES];
+static int g_nclasses;
+
+static LRESULT CALLBACK hl_wndproc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    ATOM atom = (ATOM)GetClassLongA(h, GCW_ATOM);
+    uint32_t proc = 0;
+    for (int i = 0; i < g_nclasses; i++)
+        if (g_classes[i].atom == atom) proc = g_classes[i].proc;
+    if (m == WM_ACTIVATEAPP || m == WM_NCACTIVATE) w = TRUE;
+    else if (m == WM_ACTIVATE) w = MAKEWPARAM(WA_ACTIVE, HIWORD(w));
+    else if (m == WM_KILLFOCUS) return 0;
+    /* The guest procedure is guest code: Windows' call into it faults on the
+     * non-executable page and native32 runs the lifted body. */
+    return proc ? CallWindowProcA((WNDPROC)(uintptr_t)proc, h, m, w, l) : DefWindowProcA(h, m, w, l);
+}
+
+static void shim_RegisterClassA(void) {
+    WNDCLASSA c = *(const WNDCLASSA*)(uintptr_t)ARG(0);
+    uint32_t guest = (uint32_t)(uintptr_t)c.lpfnWndProc;
+    c.lpfnWndProc = hl_wndproc;
+    ATOM a = RegisterClassA(&c);
+    if (a && g_nclasses < MAX_CLASSES) {
+        g_classes[g_nclasses].atom = a;
+        g_classes[g_nclasses++].proc = guest;
+    }
+    g_eax = a;
+    g_esp += 4 + 1 * 4;
+}
+
+static void shim_focus_query(void) {    /* GetActiveWindow, GetForegroundWindow, GetFocus */
+    g_eax = (uint32_t)(uintptr_t)g_game_hwnd;
+    g_esp += 4;
+}
+
+/* Dialogs the same way: a top-level one is created hidden (WS_VISIBLE
+ * cleared in the template for the call), made invisible, then shown. */
+static void shim_CreateDialogIndirectParamA(void) {
+    uint8_t* t = (uint8_t*)(uintptr_t)ARG(1);
+    int ex = *(uint16_t*)(t + 2) == 0xFFFF;             /* DLGTEMPLATEEX */
+    uint32_t* style = (uint32_t*)(t + (ex ? 12 : 0));
+    uint32_t saved = *style;
+    int top = !(saved & WS_CHILD);
+    HWND h;
+    if (top) *style &= ~WS_VISIBLE;
+    h = CreateDialogIndirectParamA((HINSTANCE)(uintptr_t)GUEST_MODULE(ARG(0)), (LPCDLGTEMPLATEA)t,
+                                   (HWND)(uintptr_t)ARG(2), (DLGPROC)(uintptr_t)ARG(3), (LPARAM)ARG(4));
+    *style = saved;
+    if (h && top) {
+        SetWindowLongA(h, GWL_EXSTYLE, GetWindowLongA(h, GWL_EXSTYLE) | HL_EXSTYLE);
+        SetLayeredWindowAttributes(h, 0, 0, LWA_ALPHA);
+        if (saved & WS_VISIBLE) ShowWindow(h, SW_SHOWNOACTIVATE);
+    }
+    fprintf(stderr, "[headless] CreateDialogIndirectParamA(%s) -> hwnd %p\n", top ? "top-level" : "child", (void*)h);
+    g_eax = (uint32_t)(uintptr_t)h;
+    g_esp += 4 + 5 * 4;
 }
 
 static void shim_ShowWindow(void) {
-    g_eax = 0;                         /* "was hidden", which is true */
+    HWND h = (HWND)(uintptr_t)ARG(0);
+    int cmd = (int)ARG(1);
     g_esp += 4 + 2 * 4;
+    /* Shown without activation (the window is invisible anyway); then the
+     * activation a fullscreen window gets on showing, delivered by hand. */
+    g_eax = (uint32_t)ShowWindow(h, cmd == SW_HIDE ? SW_HIDE : SW_SHOWNOACTIVATE);
+    if (h == g_game_hwnd && cmd != SW_HIDE) {
+        SendMessageA(h, WM_ACTIVATEAPP, TRUE, 0);
+        SendMessageA(h, WM_ACTIVATE, WA_ACTIVE, 0);
+    }
 }
 
 /* ---- headless DirectDraw -------------------------------------------------
@@ -317,7 +393,7 @@ static DWORD WINAPI recorder(LPVOID unused) {
  * The guest is gamemd.exe in the game folder, not this host. Its hInstance
  * (resources, window classes) comes from GetModuleHandleA(NULL), and it finds
  * its files relative to GetModuleFileNameA. */
-static char g_guest_exe[MAX_PATH], g_guest_cmdline[MAX_PATH + 3];
+static char g_guest_exe[MAX_PATH], g_guest_cmdline[MAX_PATH + 8];
 
 static void shim_GetModuleHandleA(void) {
     g_eax = ARG(0) ? (uint32_t)(uintptr_t)GetModuleHandleA((LPCSTR)(uintptr_t)ARG(0))
@@ -381,7 +457,42 @@ static void shim_CoCreateInstance(void) {
     g_esp += 4 + 5 * 4;
 }
 
+/* A NULL module means "the process's exe" to the resource and dialog calls,
+ * and the process's exe is this host. The main menu is a dialog resource in
+ * gamemd.exe: FindResourceA(NULL, 0xE2, RT_DIALOG) found nothing, and the
+ * menu returned at once as if Exit had been picked (bringup.md, 9). */
+
+static void shim_FindResourceA(void) {
+    g_eax = (uint32_t)(uintptr_t)FindResourceA((HMODULE)(uintptr_t)GUEST_MODULE(ARG(0)),
+                                               (LPCSTR)(uintptr_t)ARG(1), (LPCSTR)(uintptr_t)ARG(2));
+    g_esp += 4 + 3 * 4;
+}
+
+static void shim_LoadResource(void) {
+    g_eax = (uint32_t)(uintptr_t)LoadResource((HMODULE)(uintptr_t)GUEST_MODULE(ARG(0)),
+                                              (HRSRC)(uintptr_t)ARG(1));
+    g_esp += 4 + 2 * 4;
+}
+
+static void shim_CreateDialogParamA(void) {
+    g_eax = (uint32_t)(uintptr_t)CreateDialogParamA((HINSTANCE)(uintptr_t)GUEST_MODULE(ARG(0)),
+                                                    (LPCSTR)(uintptr_t)ARG(1), (HWND)(uintptr_t)ARG(2),
+                                                    (DLGPROC)(uintptr_t)ARG(3), (LPARAM)ARG(4));
+    g_esp += 4 + 5 * 4;
+}
+
+static void shim_DialogBoxParamA(void) {
+    g_eax = (uint32_t)DialogBoxParamA((HINSTANCE)(uintptr_t)GUEST_MODULE(ARG(0)),
+                                      (LPCSTR)(uintptr_t)ARG(1), (HWND)(uintptr_t)ARG(2),
+                                      (DLGPROC)(uintptr_t)ARG(3), (LPARAM)ARG(4));
+    g_esp += 4 + 5 * 4;
+}
+
 #define GUEST_SHIMS \
+    { "FindResourceA", shim_FindResourceA }, \
+    { "LoadResource", shim_LoadResource }, \
+    { "CreateDialogParamA", shim_CreateDialogParamA }, \
+    { "DialogBoxParamA", shim_DialogBoxParamA }, \
     { "CoCreateInstance", shim_CoCreateInstance }, \
     { "GetModuleHandleA", shim_GetModuleHandleA }, \
     { "GetModuleFileNameA", shim_GetModuleFileNameA }, \
@@ -394,12 +505,36 @@ static native32_shim_t g_headless_shims[] = {
     { "MessageBoxA", shim_MessageBoxA },
     { "CreateWindowExA", shim_CreateWindowExA },
     { "ShowWindow", shim_ShowWindow },
+    { "RegisterClassA", shim_RegisterClassA },
+    { "CreateDialogIndirectParamA", shim_CreateDialogIndirectParamA },
+    { "GetActiveWindow", shim_focus_query },
+    { "GetForegroundWindow", shim_focus_query },
+    { "GetFocus", shim_focus_query },
     { "ClientToScreen", shim_ClientToScreen },
     { "ScreenToClient", shim_ClientToScreen },
     { "GetSystemMetrics", shim_GetSystemMetrics },
-    { "_BinkSetSoundSystem@8", shim_BinkSetSoundSystem },
     { "DirectDrawCreate", shim_DirectDrawCreate },
 };
+
+/* ---- hooks: lifted functions given a host body (run_lift.py HOOKS) ------- */
+
+/* The game's debug printf, compiled out of the retail build. --debuglog
+ * prints it: printf-style, the arguments read straight off the guest stack
+ * (a cdecl va_list on x86 is a pointer to the first variadic slot). */
+static int g_debuglog;
+
+void ra2_hook_004068E0(void) {
+    if (g_debuglog) {
+        char buf[1024];
+        const char* fmt = (const char*)(uintptr_t)MEM32(g_esp + 4);
+        size_t n;
+        _vsnprintf(buf, sizeof buf - 1, fmt, (va_list)(uintptr_t)(g_esp + 8));
+        buf[sizeof buf - 1] = 0;
+        n = strlen(buf);
+        fprintf(stderr, "[game] %s%s", buf, n && buf[n - 1] == '\n' ? "" : "\n");
+    }
+    g_esp += 4;                        /* ret */
+}
 
 /* ---- diagnostics ---------------------------------------------------------
  * --probe VA (repeatable): report indirect calls to VA -- a virtual method or
@@ -473,6 +608,9 @@ static LONG CALLBACK crash(EXCEPTION_POINTERS* ep) {
     }
     DWORD w;
     WriteFile(GetStdHandle(STD_ERROR_HANDLE), g_crash_buf, (DWORD)g_crash_len, &w, NULL);
+    /* After the report, which must not wait on it: --calltrace buffers 4 MB,
+     * and without this the entries nearest the fault were the ones lost. */
+    recomp_trace_flush();
     TerminateProcess(GetCurrentProcess(), 3);
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -485,6 +623,7 @@ static DWORD WINAPI watchdog(LPVOID unused) {
     native32_dump_icalls(8);
     probe_report();
     record_close();
+    recomp_trace_flush();
     fflush(stderr);
     TerminateProcess(GetCurrentProcess(), 4);
     return 0;
@@ -500,6 +639,7 @@ int main(int argc, char** argv) {
         if (n) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = 1;
+        else if (!strcmp(argv[i], "--debuglog")) g_debuglog = 1;
         else if (!strcmp(argv[i], "--probe") && i + 1 < argc && g_nprobe < MAX_PROBES)
             g_probe[g_nprobe++] = strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--record") && i + 1 < argc) g_record = argv[++i];
@@ -511,7 +651,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--callbacks")) native32_trace_callbacks = 1;
         else {
             printf("usage: ra2 [--run] [--headless] [--record out.mp4] [--frames N] [--exe game\\gamemd.exe] [--game game]\n"
-                   "           [--watchdog S] [--probe VA] [--native-trace] [--callbacks]\n");
+                   "           [--watchdog S] [--probe VA] [--debuglog] [--native-trace] [--callbacks]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
         }

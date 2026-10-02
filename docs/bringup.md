@@ -134,7 +134,120 @@ and Bink never says the next frame is due.
 | on (DirectSound) | 2 | ~40 s, both |
 | off (`BinkSetSoundSystem` refused) | 2 | ~110 s; not within 150 s |
 
-So sound makes it reliable but does not cause it. The machine was also running
-other projects' compiles at the time. Headless now refuses Bink's sound system,
-which is a stopgap with a known ceiling (`ponytail:` in `host.c`); the root
-cause is open (ROADMAP).
+So sound made it reliable but did not cause it. For a while headless refused
+Bink's sound system as a stopgap; section 7 found the real cause, and movies
+have their sound back.
+
+## 7. The movie stall was focus, not Bink
+
+Section 6's stall turned out to be the game pausing its own movie. The movie
+loop (`0x00432E80`) calls `BinkPause(1)` whenever `GameInFocus`
+(`0x00A8ED80`) is clear, and the window procedure sets that byte from the
+`wParam` of activation messages (`0x007778CE`). A hidden window is never the
+foreground one, so whenever Windows said so, the movie paused for good. When
+that happened depended on timing, which is why the traced (slower) build
+stalled more and why sound made it worse.
+
+Fix (host, headless): `RegisterClassA` wraps the game's window procedure, and
+every `WM_ACTIVATEAPP`/`WM_ACTIVATE`/`WM_NCACTIVATE` reaches it as "active"
+(`WM_KILLFOCUS` is dropped). `GetActiveWindow`, `GetForegroundWindow` and
+`GetFocus` answer the game's window, and `ShowWindow` delivers the activation
+a fullscreen window gets. The guest procedure is called with
+`CallWindowProcA`; native32 runs the lifted body when Windows calls into guest
+code.
+
+## 8. The debug log, and a NULL module
+
+The retail `gamemd.exe` compiled its debug printf out (`0x004068E0` is a bare
+`ret`). `run_lift.py` now has `HOOKS`: functions whose body is the host's.
+`ra2_hook_004068E0` formats the arguments off the guest stack, and
+`--debuglog` prints the game's own log at almost no cost:
+
+```
+[game] Init CDROM
+[game] Calling Force_CD_Available
+[game] Init Rules
+...
+[game] Game Init Completed.
+[game] Theme::PlaySong(0) - Repeating
+```
+
+After `Game Init Completed` the main-menu routine (`0x00531CC0`) returned at
+once, as if Exit had been picked, and the game shut down (the `ebp = 0x43`
+fault on the way out is a separate, open bug). `--native-trace` showed why:
+
+```
+[native] KERNEL32.dll!FindResourceA (00000000 000000E2 00000005 00000000) from sub_004A3B40 -> 00000000
+```
+
+Dialog `0xE2` is the main menu (`GUI:SinglePlayer`, `GUI:Options`, ...). A
+NULL module means "the process's exe", and the process's exe is the host.
+Fix (host): `FindResourceA`, `LoadResource`, `CreateDialogParamA` and
+`DialogBoxParamA` map a NULL module to the guest image.
+
+With that, the game draws its menu frame: the sidebar, the red map backdrop
+and the meter panel, all its own art, rendered by the recompiled code.
+
+## 9. A missing fall-through after a call: the insert-disc box
+
+The menu frame came up with an insert-disc box (`TXT_CD_DIALOG_1`) in it. The
+Steam build's CD check is patched to pass (`0x004A80D0` is `mov eax, 2; ret`),
+so init found "disc 2" and built a search path from the drive list
+(`sprintf("%c:\\")` and an inline strcat at `0x0052C424`). The path came out
+as `";"`, and `Set_Search_Drives` with no drive asks for the disc.
+
+The lift of init was missing code. After `call sprintf` at `0x0052C438` the
+generated C went straight on to `L_0052C4C0`, and `0x0052C43D..0x0052C4BF`
+(the strcat and the rest of the loop) was not there:
+
+```c
+    RECOMP_CALL(sub_007C8EF4); /* 0x0052C438: call 0x7c8ef4 */
+    RECOMP_FLAGS_IN();
+L_0052C4C0:
+    ecx = esp + 0x740; /* 0x0052C4C0: lea ecx, [esp + 0x740] */
+```
+
+The catalog has a false entry at `0x0052C43D`, the return address of that
+call. The extent walk reads "a call followed by an entry" as a call that never
+returns, and stops there. Then the emitter placed the next instruction it had
+straight after the call, so control fell into unrelated code.
+
+Fix (toolkit, `generate.py`): a gap in the middle of a body ends with a goto
+to the fall-through address if it is in the body, or a tail transfer to it if
+not, as the end of a body already did (pcrecomp #41).
+
+Not needed after all: `-CD.` on the guest command line. It was a workaround
+for 8, and it does set the "disc present" flag (`0x0052F7AF`), but the Steam
+build runs without it.
+
+## 10. Hidden windows are never painted: the main menu
+
+With 9 fixed, init completed and the main menu opened (dialog `0xE2`, and its
+looping background movie), but the screen showed the menu frame and nine empty
+button slots, and never changed. `--native-trace` over a minute at the menu:
+
+```
+5213222 USER32.dll!PeekMessageA
+   1288 USER32.dll!InvalidateRect
+      0 BeginPaint
+```
+
+RA2's menus are real Win32 dialogs whose controls the game paints itself, and
+a hidden window gets no `WM_PAINT`. So headless no longer hides the game's
+windows: a top-level window (and a top-level dialog, with `WS_VISIBLE` cleared
+in its template for the create) is made layered at alpha 0, click-through
+(`WS_EX_TRANSPARENT`), never activated (`WS_EX_NOACTIVATE`) and off the taskbar
+(`WS_EX_TOOLWINDOW`), then shown with `SW_SHOWNOACTIVATE`. Windows treats it as
+visible and paints it; nothing appears on any screen, and it cannot take over
+an RDP session.
+
+```
+[headless] CreateDialogIndirectParamA(child) -> hwnd 0590215C
+[game] Play_Movie() as Bink!
+[game] Looping movie
+```
+
+The main menu then draws completely: Single Player, Internet, Network, Movies
+& Credits, Options, Exit Game, the animated backdrop, and `Version 1.001TUC`.
+With movie sound back on (7), a five-minute run plays the whole intro and
+reaches the menu: conformance 8/8.

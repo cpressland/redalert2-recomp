@@ -47,6 +47,16 @@ SEEDS = os.path.join(_HERE, 'work', 'rtti_seeds.json')
 OUT = os.path.join(_HERE, 'src', 'recomp', 'gen')
 STATS = os.path.join(_HERE, 'work', 'lift_stats.json')
 
+# Functions whose body is the host's instead of the lift: the host defines
+# ra2_hook_XXXXXXXX(void) and it runs like an import shim (arguments from
+# g_esp, pops its own return address). src/runtime/host.c.
+HOOKS = {
+    # The debug printf. Compiled out of the retail build (a bare `ret`), so
+    # the host gives it a body: --debuglog prints the game's own log, which
+    # says what init is doing at a fraction of --argtrace's cost.
+    0x004068E0,
+}
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--exe', default=EXE)
@@ -138,6 +148,11 @@ def main():
     def lift_one(addr, name, end, reached):
         nonlocal errors
 
+        if addr in HOOKS:
+            chunk.append(('extern void ra2_hook_%08X(void);\nvoid %s(void) { ra2_hook_%08X(); }\n'
+                          % (addr, name, addr), addr, name))
+            entries.append((addr, name))
+            return
         try:
             lo = min(reached) if reached else addr   # a chunk can sit below the entry
             insns, leaders = (linear_disassemble_function(md, code, cs, lo, end, reached=reached)

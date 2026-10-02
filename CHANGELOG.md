@@ -5,10 +5,6 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-### Known issues
-- Bink's pacing stalls partway through the intro (bringup.md, 6). Headless
-  refuses Bink's sound system meanwhile, so movies play silent.
-
 ### Added
 - The pipeline for Yuri's Revenge `gamemd.exe` 1.001: RTTI (954 classes), the
   function catalog (22,682 functions), and the lift driver `run_lift.py`
@@ -25,8 +21,22 @@ versions follow [SemVer](https://semver.org/).
   the intro movie playing.
 - The Westwood logo and the Yuri's Revenge intro play headless, drawn by Bink
   into the game's primary surface; screenshots in the README.
+- The main menu: the recompiled game reaches it after the full intro and draws
+  it completely. Conformance 8/8.
+- `--debuglog`: the game's own debug log, through `run_lift.py` `HOOKS` (a
+  lifted function given a host body).
 
 ### Fixed
+- Movies froze for good at a timing-dependent moment: the game pauses Bink
+  while its window is not active, and a hidden window never is. Headless
+  delivers every activation message as "active".
+- The main menu returned at once: its dialog resource was looked up in the
+  host, because a NULL module means the process exe. Resource and dialog calls
+  now map NULL to the guest image.
+- The menu drew no buttons: hidden windows get no `WM_PAINT`. Headless windows
+  are now layered at alpha 0 instead of hidden.
+- The insert-disc box: a lift bug dropped init's strcat after `call sprintf`,
+  so the CD search path was empty. Fixed in pcrecomp #41.
 - Headless: the intro movie was centred on the real desktop and Bink wrote
   past the primary. After `SetDisplayMode` the hidden window takes the mode's
   size, `GetSystemMetrics` reports it, and `ClientToScreen` is identity.

@@ -15,7 +15,7 @@ This is not [OpenRA](https://www.openra.net/). OpenRA is a separate engine
 that loads the original assets and reimplements the rules; this project runs
 Westwood's own code, recompiled.
 
-## Status: **v0.1.0-dev, bring-up.** The whole game lifts with 0 errors, and the recompiled game boots and plays its Westwood logo and the Yuri's Revenge intro cinematic.
+## Status: **v0.1.0-dev, bring-up.** The whole game lifts with 0 errors, and the recompiled game boots, plays the full intro cinematic and reaches the main menu.
 
 | Stage | State |
 |---|---|
@@ -23,9 +23,9 @@ Westwood's own code, recompiled.
 | RTTI class recovery | 954 classes, 1,214 vtables, 6,665 virtual methods |
 | Function catalog (`disasm32`) | 22,682 functions, 89.0% of `.text`, 15 minutes |
 | Lift (`run_lift.py --all`) | 23,458 functions, 5.1M lines of C, **0 lift errors** |
-| Host (`build/ra2.exe`, 32-bit, pcrecomp `native32`) | boots: CRT and 3,952 static constructors, `WinMain`, COM servers, window, DirectDraw at 800x600x16, then the Westwood logo and the intro movie through Bink. The movie's pacing can stall partway; menus not reached yet ([bringup.md](docs/bringup.md)) |
+| Host (`build/ra2.exe`, 32-bit, pcrecomp `native32`) | boots: CRT and 3,952 static constructors, `WinMain`, COM servers, window, DirectDraw at 800x600x16, the Westwood logo and the intro movie through Bink, and the **main menu**, drawn and animated ([bringup.md](docs/bringup.md)) |
 | Headless mode | `--headless --record out.mp4 --frames N`: hidden window, no mode change, the primary surface recorded to ffmpeg ([host.md](docs/host.md)) |
-| Conformance harness | `tools/conformance.py`: **7/7** boot milestones, lift 0 errors, against `conformance.json`; fails on regression |
+| Conformance harness | `tools/conformance.py`: **8/8** boot milestones up to the main menu, lift 0 errors, against `conformance.json`; fails on regression |
 
 [bringup.md](docs/bringup.md) is the log of each wall and its fix. One of them
 was a toolkit bug (catalog entries in alignment padding hid 66 functions), fixed
@@ -34,8 +34,11 @@ in pcrecomp rather than here.
 ## Screenshots
 
 Rendered by the recompiled game and recorded headlessly (`--headless
---record`) over RDP, with no window on any screen: the Westwood logo and the
-Yuri's Revenge intro, decoded by Bink into the game's own primary surface.
+--record`) over RDP, with nothing on any screen. The main menu, then the
+Westwood logo and the Yuri's Revenge intro, decoded by Bink into the game's
+own primary surface.
+
+![Main menu](docs/screenshots/main-menu.png)
 
 | | | |
 |---|---|---|
@@ -68,8 +71,9 @@ run end to end from a clean folder (ROADMAP), so if it stops, Step by step is
 the tested route.
 
 It ends with `Red Alert 2 (recomp).cmd` in this folder, which runs the
-recompiled game headless for two minutes and records `boot.mp4`. It does not
-get past the intro yet, so that is a bring-up run, not something to play.
+recompiled game headless for five minutes and records `boot.mp4`: the intro,
+then the main menu. There is no input yet, so that is a bring-up run, not
+something to play.
 
 ### Step by step
 
@@ -130,7 +134,8 @@ build\ra2.exe --headless --run --record out.mp4 --frames 300
 py -3 tools\conformance.py                      # boot milestones + lift health vs the baseline
 ```
 
-Diagnostics: `--native-trace` (every call into Windows), `--callbacks`,
+Diagnostics: `--debuglog` (the game's own debug log), `--native-trace`
+(every call into Windows), `--callbacks`,
 `--probe VA`, and with a `-DRA2_TRACE=ON` build `--calltrace FILE` and the
 other pcrecomp trace options (`build\ra2.exe --help`).
 
@@ -139,6 +144,10 @@ other pcrecomp trace options (`build\ra2.exe --help`).
 Steps 5 and 6 above. `PCRECOMP` (environment, for `run_lift.py`) and
 `-DPCRECOMP=` (CMake) point at a toolkit checkout other than `..\tools`; the
 lifter and the runtime must come from the same tree.
+
+The lift needs pcrecomp #41 (a generator fix found here). Until it is merged,
+lift from that branch:
+`git -C ..	ools fetch origin fix/generate-midbody-fallthrough` and check it out.
 
 ## Documentation
 

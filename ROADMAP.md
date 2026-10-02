@@ -2,17 +2,16 @@
 
 ## Next
 
-1. **Bink's pacing stall** (bringup.md, 6): find why `BinkWait` stops
-   releasing frames, then give movies their sound back and record the audio.
-2. **Past the intro to the main menu**, then scripted input
-   (`--key vk@s`, `--click x,y@s`, The Movies' shape) to skip movies and play
-   into a skirmish headless.
-3. **Native reference run.** Record the original `gamemd.exe` under offstage at
+1. **Scripted input** (`--key vk@s`, `--click x,y@s`, The Movies' shape):
+   skip the intro, and click from the main menu into a skirmish, headless.
+2. **The exit path's `ebp = 0x43` fault** after `Main_Loop` returns
+   (bringup.md, 8): something on that path returns with ebp clobbered.
+3. **Record the audio** with `--record`.
+4. **Native reference run.** Record the original `gamemd.exe` under offstage at
    the console for the same seconds of startup, as ground truth to compare
    frames against.
-4. **Upstream the disasm32 padding fix** (pcrecomp #32)
-   and re-check the titles that use disasm32 for regressions.
-5. **Setup.cmd** end to end from a clean folder, then the shortcut.
+5. **Upstream the generator fix** (pcrecomp #41).
+6. **Setup.cmd** end to end from a clean folder, then the shortcut.
 
 ## The remaster
 

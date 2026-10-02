@@ -24,17 +24,23 @@ The host links at `/BASE:0x60000000` so the guest's range is free.
 | `GetModuleFileNameA` | x | | the game finds its files next to `gamemd.exe` |
 | `GetCommandLineA` | x | | the guest's own command line |
 | `CoCreateInstance` | x | | serves `Blowfish.dll` without registry entries (bringup.md, 2) |
+| `FindResourceA`, `LoadResource`, `CreateDialogParamA`, `DialogBoxParamA` | x | | a NULL module means the guest image, not the host (bringup.md, 8) |
 | `MessageBoxA` | | x | printed, answered No/OK |
-| `CreateWindowExA`, `ShowWindow` | | x | the window exists but is never shown |
+| `CreateWindowExA`, `ShowWindow`, `CreateDialogIndirectParamA` | | x | top-level windows are layered at alpha 0, click-through, never activated: visible to Windows, so they get painted, and on no screen (bringup.md, 10) |
+| `RegisterClassA` | | x | wraps the window procedure so every activation message says "active" (bringup.md, 7) |
+| `GetActiveWindow`, `GetForegroundWindow`, `GetFocus` | | x | answer the game's window |
 | `DirectDrawCreate` | | x | the IDirectDraw vtable is patched: see below |
 | `GetSystemMetrics` (screen size) | | x | the mode's size once one is set, as after a real mode change |
 | `ClientToScreen`, `ScreenToClient` | | x | identity: the window is the whole screen (bringup.md, 5) |
-| `_BinkSetSoundSystem@8` | | x | refused, movies play silent: a stopgap (bringup.md, 6) |
 
 Before binding imports the host loads the system `ddraw.dll` by full path and
 then adds the game folder to the DLL search path. The folder carries
 `binkw32.dll`, which the game imports, and also DDrawCompat as `ddraw.dll`,
 which is a fullscreen shim of its own and is not wanted.
+
+One function is the host's instead of the lift's: the game's debug printf
+(`0x004068E0`, a bare `ret` in the retail build), through `run_lift.py`
+`HOOKS`. `--debuglog` prints the game's own log.
 
 ## Headless DirectDraw
 

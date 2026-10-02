@@ -40,6 +40,8 @@ MILESTONES = [
     ('first frame blitted', r'\[headless\] frame 1 blitted'),
     # Bink copies the intro straight into the primary; --record samples it.
     ('intro video plays (5+ distinct frames sampled)', None),
+    # Dialog 0xE2, after the four-minute intro: the menu's own movie starts.
+    ('main menu reached', r'\[game\] Looping movie'),
 ]
 
 
@@ -49,7 +51,7 @@ def distinct_frames(out):
 
 def boot(seconds):
     try:
-        p = subprocess.run([HOST, '--headless', '--run', '--watchdog', str(seconds),
+        p = subprocess.run([HOST, '--headless', '--run', '--debuglog', '--watchdog', str(seconds),
                             '--record', os.path.join(ROOT, 'work', 'conformance.mp4')],
                            cwd=ROOT, capture_output=True, text=True, errors='replace',
                            timeout=seconds + 60)
@@ -76,7 +78,8 @@ def lift_health():
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--update', action='store_true', help='accept this run as the baseline')
-    ap.add_argument('--seconds', type=int, default=120, help='headless run length')
+    ap.add_argument('--seconds', type=int, default=300,
+                    help='headless run length (the intro alone is four minutes)')
     args = ap.parse_args()
     if not (os.path.exists(HOST) and os.path.isdir(os.path.join(ROOT, 'game'))):
         print('conformance: skipped -- needs game/ (your copy) and build/ra2.exe '
