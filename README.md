@@ -21,8 +21,8 @@ Westwood's own code, recompiled.
 |---|---|
 | P0: pick the build | the Steam build of *The Ultimate Collection*: `gamemd.exe`, 2001-10-31, no DRM, launcher check already patched out ([RECON.md](docs/RECON.md)) |
 | RTTI class recovery | 954 classes, 1,214 vtables, 6,665 virtual methods |
-| Function catalog (`disasm32`) | 22,682 functions, 89.0% of `.text`, 15 minutes |
-| Lift (`run_lift.py --all`) | 23,458 functions, 5.1M lines of C, **0 lift errors** |
+| Function catalog (`disasm32`) | 24,940 functions, 91.8% of `.text`, 15 minutes |
+| Lift (`run_lift.py --all`) | 24,954 functions, 5.8M lines of C, **0 lift errors** |
 | Host (`build/ra2.exe`, 32-bit, pcrecomp `native32`) | boots: CRT and 3,952 static constructors, `WinMain`, COM servers, window, DirectDraw at 800x600x16, the Westwood logo and the intro movie through Bink, and the **main menu**, drawn and animated ([bringup.md](docs/bringup.md)) |
 | Playtest suite (`tools/playtest.py`) | **28 of 28 passing**: every menu screen, every way back, a skirmish start to score screen, the Allied and Soviet campaigns, 720p to 4K: scripted by button name, run in parallel, and `--original` runs the same script on the shipping code to tell lift bugs from host bugs ([testing.md](docs/testing.md)) |
 | Presenter (the default display) | the game in its own Direct3D 11 window: sharp-bilinear, smooth, CRT, nearest or integer scaling (F12), borderless fullscreen (F11), native resolution on high-DPI screens; `--classic` is the original DirectDraw ([presenter.md](docs/presenter.md)) |
@@ -118,7 +118,7 @@ some-folder\
    ```
    py -3 ..\tools\tools\disasm\disasm32.py game\gamemd.exe -o work\functions.json --seed-functions work\rtti_seeds.json
    ```
-   Expected: `Functions: 22682` and `Byte coverage: ... (89.0% of code range)`.
+   Expected: `Functions: 24940` and `Byte coverage: ... (91.8% of code range)`.
 5. Lift (5 to 15 minutes):
    ```
    py -3 run_lift.py --all
@@ -166,10 +166,11 @@ Steps 5 and 6 above. `PCRECOMP` (environment, for `run_lift.py`) and
 `-DPCRECOMP=` (CMake) point at a toolkit checkout other than `..\tools`; the
 lifter and the runtime must come from the same tree.
 
-The lift needs three pcrecomp fixes found here and not yet merged: #41
-(mid-body fall-through), #42 (lifted loops yield the machine) and #43
-(push/jmp inside a body). Until they are, lift from a checkout with all three
-merged into `main`.
+The lift needs four pcrecomp fixes found here and not yet merged: #41
+(mid-body fall-through), #42 (lifted loops yield the machine), #43
+(push/jmp inside a body) and #44 (MASM align fillers in the catalog; without
+it every vehicle is invisible). Until they are, catalog and lift from a
+checkout with all four merged into `main`.
 
 ## Documentation
 
@@ -177,6 +178,7 @@ merged into `main`.
 - [docs/host.md](docs/host.md): the host, headless DirectDraw, registration-free COM
 - [docs/presenter.md](docs/presenter.md): the presenter window, scaling, the virtual screen
 - [docs/hires.md](docs/hires.md): high resolution and widescreen, and the 4K sidebar fix
+- [docs/voxels.md](docs/voxels.md): the voxel renderer, mapped, and the road to HD voxels
 - [docs/bringup.md](docs/bringup.md): every wall so far and its fix
 - [docs/testing.md](docs/testing.md): the playtest suite, scripted input and the `--original` oracle
 - [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md)

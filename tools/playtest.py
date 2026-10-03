@@ -256,6 +256,7 @@ def run(name, args, seconds, expect, every, original=False):
     mp4, log = os.path.join(d, 'run.mp4'), os.path.join(d, 'run.log')
     cmd = [HOST, '--headless', '--run', '--debuglog', '--watchdog', str(seconds),
            '--record', mp4, '--exe', os.path.join(game, 'gamemd.exe'), '--game', game] + args
+    cmd += os.environ.get('RA2_HOST_ARGS', '').replace('{case}', d).split()  # extra host flags; {case} is the case's folder
     if original:
         cmd.append('--original')
     with open(log, 'w', errors='replace') as f:
@@ -270,7 +271,9 @@ def run(name, args, seconds, expect, every, original=False):
                         'fps=1/%g,scale=320:-1,tile=4x4' % max(every, seconds / 16.0), '-frames:v', '1',
                         os.path.join(d, 'sheet.png')], cwd=ROOT)
     lines = text.splitlines()
-    bad = [l for l in lines if l.startswith(('===', '[not-lifted]', 'ITAIL', '[messagebox]'))]
+    # An unresolved ICALL returns 0 and the game carries on: the voxel
+    # rasterizer was one, and every vehicle was invisible (docs/voxels.md).
+    bad = [l for l in lines if l.startswith(('===', '[not-lifted]', 'ITAIL', 'ICALL', '[messagebox]'))]
     bad += [l for l in lines if l.startswith('[input]') and ('never opened' in l or 'no such control' in l)]
     opened = []
     for m in re.finditer(r'\[dialog\] open 0x([0-9A-F]+)', text):

@@ -6,6 +6,10 @@ versions follow [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- The voxel renderer, mapped (docs/voxels.md): the draw path from
+  TechnoClass's vtable to the rasterizers, the 256x256 colour and depth
+  buffers, the shade table and the cache, as groundwork for HD voxels.
+- `RA2_HOST_ARGS`: extra host flags for every playtest case.
 - The presenter, now the default display: the game in its own Direct3D 11
   window with sharp-bilinear, smooth, CRT, nearest and integer scaling (F12),
   borderless fullscreen (F11, Alt+Enter), native resolution on high-DPI
@@ -22,12 +26,13 @@ versions follow [SemVer](https://semver.org/).
 - The presenter's settings menu (F10, or right-click beside the picture):
   scaling, bars, fullscreen, and the game's resolution, without editing the
   INI. Blurred bars beside the 4:3 menus. Settings and the window's place are
-  kept in `builda2.ini`.
+  kept in `build
+a2.ini`.
 - `tools/present_drive.ps1`: clicks the presenter window like a player, for
   testing it.
 - The pipeline for Yuri's Revenge `gamemd.exe` 1.001: RTTI (954 classes), the
-  function catalog (22,682 functions), and the lift driver `run_lift.py`
-  (23,458 functions, 0 lift errors).
+  function catalog (24,940 functions), and the lift driver `run_lift.py`
+  (24,954 functions, 0 lift errors).
 - `run_lift.py --seeds`: entries a run found that the catalog lacks.
 - The host, `build/ra2.exe`, on pcrecomp `native32`. Boots through the CRT,
   WinMain, COM registration and DirectDraw setup.
@@ -57,6 +62,11 @@ versions follow [SemVer](https://semver.org/).
   script, to tell lift bugs from host bugs.
 
 ### Fixed
+- Every vehicle was invisible: the voxel rasterizers' table entries had no
+  function, because MASM's alignment fillers before them read as a hot-patch
+  prologue (pcrecomp #44). The playtest suite now fails a run on an
+  unresolved `ICALL`, which is how 28/28 passed without them
+  (docs/bringup.md 12).
 - A race between the recorder writing a frame and the watchdog closing the
   recording ended some runs with 0xC0000409; the pipe is now locked.
 - Exit Game hung on a spin-wait for the sound thread (pcrecomp #42), and the

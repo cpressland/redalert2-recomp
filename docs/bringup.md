@@ -268,3 +268,19 @@ running the same script on the shipping code (`--original`):
 | Exit Game hung after "Theme::Stop(0) - Fading" | lift (toolkit) | The main thread spins at `0x0040A047` waiting for the sound thread, and native32 only handed the machine over at native calls. Lifted loops now yield it every 65,536 back-edges (pcrecomp #42). |
 | LAN New Game: execute of `0x24` | lift (toolkit) | `push 0x00617250; jmp 0x00618B9D` (an argument and a jump to the procedure's own epilogue) was lifted as a call returning to `0x00617250`, which restarted the procedure on a scrambled stack (pcrecomp #43). |
 | The campaign emblems did nothing | script | They are static controls, and a static passes its clicks to the dialog. `--press` on a static now clicks the dialog at that point. |
+
+## 12. Every vehicle invisible: a MASM alignment filler
+
+Mapping the voxel renderer for HD voxels ([voxels.md](voxels.md)) showed
+that in the recomp no vehicle was ever drawn: shadows, health bars and
+selection boxes, but no MCV and no tanks, where `--original` drew them all.
+Every in-game run logged hundreds of `ICALL: unresolved VA 0x007DF9C0`: the
+voxel rasterizers are hand-written assembly behind a table, padded with
+MASM's `align 16` fillers that end in `mov edi, edi`, which disasm32 read as a
+hot-patch prologue. Each function started two bytes early and the table's
+entries had none. The catalog fix (pcrecomp #44) moves the
+three entries to where the table points, and the playtest suite now fails a
+run on any unresolved `ICALL`: an unresolved indirect call returns 0 and the
+game carries on, so the suite passed 28/28 with every vehicle missing.
+
+![Vehicles drawn](screenshots/skirmish-units.png)

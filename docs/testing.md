@@ -127,3 +127,9 @@ Exit 4 is the watchdog, the normal end of a timed run. The evidence is in
 `work/tests/<case>/`: `run.log`, `run.mp4` and `sheet.png`. Reading the sheets
 is the real test: a pass says the case reached what it expected and ran clean,
 not that every pixel was right.
+
+"Ran clean" means no fault, no `[not-lifted]`, no unresolved `ITAIL` or
+`ICALL`, no message box. An unresolved indirect call returns 0 and the game
+carries on, so it fails the case: the voxel rasterizers were one, and the
+suite passed with every vehicle invisible until they were counted
+([bringup.md](bringup.md) 12).
