@@ -37,7 +37,7 @@ static int   g_headless;
 /* How the game is shown. The presenter (present.c) is the default: the display
  * is virtual, as headless, and our own Direct3D 11 window shows it. --classic is
  * the game's own exclusive-fullscreen DirectDraw, as it shipped. */
-static int   g_classic, g_fullscreen = 0, g_scale_mode = 0;
+static int   g_classic, g_fullscreen = -1, g_scale_mode = -1;   /* -1: as ra2.ini says */
 
 #define ARG(n) MEM32(g_esp + 4 + 4 * (n))
 static const char* gstr(uint32_t va) { return va ? (const char*)(uintptr_t)va : "(null)"; }

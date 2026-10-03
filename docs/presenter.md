@@ -17,6 +17,37 @@ build\ra2.exe --run --classic                     # the original display
 |---|---|
 | F11, Alt+Enter | borderless fullscreen on the window's monitor, and back |
 | F12 | scaling: sharp-bilinear, smooth, CRT, nearest, integer |
+| F10, or right-click beside the picture | the settings menu |
+
+## Settings
+
+The settings menu has the scaling, the bars, fullscreen, and the game's
+resolution. The presenter remembers its own choices, and the window's place
+and size, in `builda2.ini`:
+
+```ini
+[present]
+scale=sharp
+bars=blur
+fullscreen=0
+window=100,100,1600,900
+```
+
+A `--scale` or `--fullscreen` on the command line wins over the file.
+
+- **Bars.** The 800x600 menus in a 16:9 window or screen leave bars at the
+  sides. `blur` (the default) fills them with a soft, darkened copy of the
+  picture stretched over the whole window, so the menus sit in a frame rather
+  than a hole; `black` is plain letterboxing. The shader draws the fill first
+  (`mode 5`, a 5x5 box of wide taps) and the picture on top.
+- **Game resolution** applies to the next game (skirmish or mission); the
+  menus are always 800x600. It is written to the game's `RA2MD.INI`
+  `[Video] ScreenWidth/ScreenHeight`, and to the game's options in memory
+  (`0x00A8EB60` +0x24/+0x28, the object the settings reader is called on at
+  `0x0052C630`), because the game saves its own options on exit and would put
+  the old size back. 3840x2160 needs the sidebar fix in [hires.md](hires.md).
+- While the menu is open the picture holds still (the menu runs its own
+  message loop on the presenter's thread); the game itself keeps running.
 
 ## How it fits together
 

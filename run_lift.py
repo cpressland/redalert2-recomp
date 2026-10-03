@@ -57,6 +57,60 @@ HOOKS = {
     0x004068E0,
 }
 
+# ---- remaster patches: C emitted after one instruction ---------------------
+# The lift stays faithful; a patch is a line of C added after an instruction
+# the game repo names, for a fix the original game cannot have. The --original
+# oracle runs the shipping code unpatched, so it remains the reference.
+
+SIDEBAR_ROWS_MAX = 30
+
+
+def sidebar_rows_patches(code, cs):
+    """The sidebar's cameo rows, capped at 30 so 4K fits its button array.
+
+    The sidebar keeps its cameo buttons in a static array at 0x00B07E80: 240
+    buttons, four tabs of 60 (0x006A4DC0 builds them; index = tab * 60 + i).
+    Its height says how many rows of two to lay out, (height - 26 - top) / 50,
+    and at 2160 lines that is about 41 rows: 82 buttons, past the tab's 60 and
+    at the last tab past the array (docs/hires.md). Every place that computes
+    the row count divides by 50 the same way -- imul by 0x51EB851F, sar 4, then
+    `add r, (r >> 31)` to round toward zero -- so each is found by that shape,
+    in the sidebar code that reads the sidebar's height (0x00886F9C) or its top
+    (0x00B0B4F8), and the result register is capped right after the add. Up to
+    1440 lines nothing changes (27 rows or fewer).
+    """
+    md = Cs(CS_ARCH_X86, CS_MODE_32)
+    magic = b'\xb8\x1f\x85\xeb\x51'                      # mov eax, 0x51EB851F
+    refs = (b'\x9c\x6f\x88\x00', b'\xf8\xb4\xb0\x00')   # 0x00886F9C, 0x00B0B4F8
+    out, i = {}, code.find(magic)
+    while i != -1:
+        va = cs + i
+        if 0x006A5000 <= va < 0x006AD000 and any(r in code[max(0, i - 0x30):i] for r in refs):
+            shr = None
+            for ins in md.disasm(code[i:i + 0x30], va):
+                if ins.mnemonic == 'shr' and ins.op_str.endswith(', 0x1f'):
+                    shr = ins.op_str.split(',')[0]
+                elif shr and ins.mnemonic == 'add' and ins.op_str.split(', ')[1] == shr:
+                    reg = ins.op_str.split(',')[0]
+                    out[ins.address] = ('if ((int32_t)%s > %d) %s = %d; /* remaster: sidebar rows, '
+                                        'run_lift.py sidebar_rows_patches */' % (reg, SIDEBAR_ROWS_MAX, reg,
+                                                                                 SIDEBAR_ROWS_MAX))
+                    break
+        i = code.find(magic, i + 1)
+    return out
+
+
+def apply_patches(body, patches):
+    """Add each patch's C after the line that lifts its instruction."""
+    for va, c in patches.items():
+        tag = '/* 0x%08X:' % va
+        k = body.find(tag)
+        if k != -1:
+            e = body.index('\n', k)
+            body = body[:e + 1] + '    ' + c + '\n' + body[e + 1:]
+    return body
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--exe', default=EXE)
@@ -123,6 +177,8 @@ def main():
     # every 64-bit add and subtract. The Movies lost its menu video to it
     # (its docs/bringup.md); off by default in lift32 only because Fury3 leans
     # on the imprecision.
+    patches = sidebar_rows_patches(code, cs)
+    print('[*] remaster patches: %d (sidebar rows capped at %d)' % (len(patches), SIDEBAR_ROWS_MAX))
     lifter = Lifter(iat_map=iat, lifted=set(byaddr), precise_carry=True, precise_sbb=True)
     os.makedirs(args.out, exist_ok=True)
     for fn in os.listdir(args.out):                 # a smaller lift must not leave stale chunks
@@ -161,6 +217,7 @@ def main():
                 leaders.add(addr)
             body = (lift_function_linear(lifter, name, insns, leaders, addr) if insns
                     else 'void %s(void) { }\n' % name)
+            body = apply_patches(body, {va: c for va, c in patches.items() if reached and va in reached})
         except Exception as e:                      # noqa: BLE001 -- counted, not hidden
             body = '/* ERROR %s: %s */\nvoid %s(void) { }\n' % (name, e, name)
             errors += 1

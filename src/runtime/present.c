@@ -13,6 +13,8 @@
  *
  *   F11, Alt+Enter   borderless fullscreen on the window's monitor
  *   F12              scaling: sharp-bilinear (default), smooth, CRT, nearest, integer
+ *   F10, right-click on the bars   the settings menu (scaling, bars,
+ *                    fullscreen, the game's resolution); kept in ra2.ini
  */
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
@@ -62,8 +64,15 @@ static const char k_hlsl[] =
 "                                                  : float3(0.87, 0.87, 1.25);\n"
 "  return col * beam * lerp(float3(1, 1, 1), mask, k);\n"
 "}\n"
+"float3 blur(float2 uv) {\n"                         /* the bars: a soft, dark copy of the picture */
+"  float3 c = 0; float r = 0.035;\n"
+"  [unroll] for (int y = -2; y <= 2; y++) [unroll] for (int x = -2; x <= 2; x++)\n"
+"    c += t0.SampleLevel(s_lin, uv + float2(x, y) * r, 0).rgb;\n"
+"  return c / 25.0 * 0.32;\n"
+"}\n"
 "float4 ps(V i) : SV_Target {\n"
 "  float3 c;\n"
+"  if (mode == 5) return float4(blur(i.uv), 1);\n"
 "  if (mode == 0) c = sharp(i.uv);\n"
 "  else if (mode == 1) c = t0.Sample(s_lin, i.uv).rgb;\n"
 "  else if (mode == 2) c = crt(i.uv, i.pos.xy);\n"
@@ -88,6 +97,7 @@ static struct {
 } d;
 
 static int g_mode;                       /* index into k_mode_names */
+static int g_bars = 1;                   /* the bars beside a letterboxed picture: 0 black, 1 blurred */
 static volatile LONG g_gw = 800, g_gh = 600;   /* the game's picture, last frame */
 static RECT g_dst;                       /* where it is drawn in the client area */
 static int g_fullscreen;
@@ -203,8 +213,6 @@ static void draw(const uint32_t* frame, int gw, int gh) {
     ID3D11DeviceContext_UpdateSubresource(d.ctx, (ID3D11Resource*)d.cb, 0, NULL, &c, 0, 0);
     static const float black[4] = { 0, 0, 0, 1 };
     ID3D11DeviceContext_ClearRenderTargetView(d.ctx, d.rtv, black);
-    D3D11_VIEWPORT vp = { (float)r.left, (float)r.top, (float)(r.right - r.left), (float)(r.bottom - r.top), 0, 1 };
-    ID3D11DeviceContext_RSSetViewports(d.ctx, 1, &vp);
     ID3D11DeviceContext_OMSetRenderTargets(d.ctx, 1, &d.rtv, NULL);
     ID3D11DeviceContext_IASetPrimitiveTopology(d.ctx, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ID3D11DeviceContext_VSSetShader(d.ctx, d.vs, NULL, 0);
@@ -212,6 +220,20 @@ static void draw(const uint32_t* frame, int gw, int gh) {
     ID3D11DeviceContext_PSSetShaderResources(d.ctx, 0, 1, &d.srv);
     ID3D11DeviceContext_PSSetSamplers(d.ctx, 0, 2, d.samp);
     ID3D11DeviceContext_PSSetConstantBuffers(d.ctx, 0, 1, &d.cb);
+    /* The bars: the 4:3 menus in a 16:9 window leave two, and a soft dark copy
+     * of the picture stretched over the whole client reads as a frame where
+     * black reads as a hole. Drawn first; the picture goes on top. */
+    if (g_bars && (r.left > 0 || r.top > 0)) {
+        struct { float src[2], dst[2]; int mode, p0, p1, p2; } cb = {
+            { (float)gw, (float)gh }, { (float)cw, (float)ch }, 5, 0, 0, 0 };
+        D3D11_VIEWPORT full = { 0, 0, (float)cw, (float)ch, 0, 1 };
+        ID3D11DeviceContext_UpdateSubresource(d.ctx, (ID3D11Resource*)d.cb, 0, NULL, &cb, 0, 0);
+        ID3D11DeviceContext_RSSetViewports(d.ctx, 1, &full);
+        ID3D11DeviceContext_Draw(d.ctx, 3, 0);
+        ID3D11DeviceContext_UpdateSubresource(d.ctx, (ID3D11Resource*)d.cb, 0, NULL, &c, 0, 0);
+    }
+    D3D11_VIEWPORT vp = { (float)r.left, (float)r.top, (float)(r.right - r.left), (float)(r.bottom - r.top), 0, 1 };
+    ID3D11DeviceContext_RSSetViewports(d.ctx, 1, &vp);
     ID3D11DeviceContext_Draw(d.ctx, 3, 0);
     IDXGISwapChain_Present(d.sc, 1, 0);               /* vsync paces this thread */
 }
@@ -348,6 +370,87 @@ static void set_fullscreen(HWND hw, int on) {
     fprintf(stderr, "[present] %s\n", on ? "fullscreen" : "windowed");
 }
 
+/* ---- settings ---------------------------------------------------------------
+ * Kept in ra2.ini beside ra2.exe: [present] scale, bars, fullscreen and the
+ * window's rect. The game's own settings stay in its RA2MD.INI. */
+static char g_ini[MAX_PATH];
+
+static void settings_path(void) {
+    char* slash;
+    GetModuleFileNameA(NULL, g_ini, MAX_PATH);
+    slash = strrchr(g_ini, '\\');
+    strcpy_s(slash ? slash + 1 : g_ini, MAX_PATH - (slash ? (slash + 1 - g_ini) : 0), "ra2.ini");
+}
+
+static void settings_save(HWND hw) {
+    char v[64];
+    WritePrivateProfileStringA("present", "scale", k_mode_names[g_mode], g_ini);
+    WritePrivateProfileStringA("present", "bars", g_bars ? "blur" : "black", g_ini);
+    WritePrivateProfileStringA("present", "fullscreen", g_fullscreen ? "1" : "0", g_ini);
+    if (hw && !g_fullscreen && !IsIconic(hw)) {
+        RECT r;
+        GetWindowRect(hw, &r);
+        _snprintf(v, sizeof v - 1, "%ld,%ld,%ld,%ld", r.left, r.top, r.right - r.left, r.bottom - r.top);
+        v[sizeof v - 1] = 0;
+        WritePrivateProfileStringA("present", "window", v, g_ini);
+    }
+}
+
+/* The game's own resolution: RA2MD.INI [Video] for the next start, and the
+ * options in memory (GameOptionsClass at 0x00A8EB60, width +0x24 and height
+ * +0x28, the fields its "Resolution = %d X %d" log line prints) so the next
+ * game opens at it and the game's own save on exit does not put the old one
+ * back. The memory is only written while it holds a plausible resolution. */
+#define OPT_W ((volatile int32_t*)(uintptr_t)(0x00A8EB60u + 0x24))
+#define OPT_H ((volatile int32_t*)(uintptr_t)(0x00A8EB60u + 0x28))
+static const int k_res[][2] = { { 800, 600 }, { 1024, 768 }, { 1280, 720 }, { 1366, 768 }, { 1600, 900 },
+                                { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 } };
+#define NRES ((int)(sizeof k_res / sizeof k_res[0]))
+
+static int opt_ok(void) { return *OPT_W >= 320 && *OPT_W <= 8192 && *OPT_H >= 200 && *OPT_H <= 8192; }
+
+static void set_game_resolution(int w, int h) {
+    char path[MAX_PATH], v[16];
+    GetFullPathNameA("RA2MD.INI", MAX_PATH, path, NULL);       /* the game runs in its folder */
+    _snprintf(v, sizeof v - 1, "%d", w), v[sizeof v - 1] = 0;
+    WritePrivateProfileStringA("Video", "ScreenWidth", v, path);
+    _snprintf(v, sizeof v - 1, "%d", h), v[sizeof v - 1] = 0;
+    WritePrivateProfileStringA("Video", "ScreenHeight", v, path);
+    if (opt_ok()) *OPT_W = w, *OPT_H = h;
+    fprintf(stderr, "[present] game resolution %dx%d (the next game opens at it)\n", w, h);
+}
+
+enum { ID_SCALE = 100, ID_BARS = 200, ID_FULL = 300, ID_RES = 400 };
+
+static void settings_menu(HWND hw) {             /* at the mouse */
+    POINT at;
+    HMENU m = CreatePopupMenu(), sc = CreatePopupMenu(), bars = CreatePopupMenu(), res = CreatePopupMenu();
+    static const char* const scale_label[NMODES] = { "Sharp (default)", "Smooth", "CRT", "Nearest", "Integer" };
+    char lbl[32];
+    for (int i = 0; i < NMODES; i++)
+        AppendMenuA(sc, MF_STRING | (i == g_mode ? MF_CHECKED : 0), ID_SCALE + i, scale_label[i]);
+    AppendMenuA(bars, MF_STRING | (g_bars ? MF_CHECKED : 0), ID_BARS + 1, "Blurred");
+    AppendMenuA(bars, MF_STRING | (!g_bars ? MF_CHECKED : 0), ID_BARS + 0, "Black");
+    for (int i = 0; i < NRES; i++) {
+        _snprintf(lbl, sizeof lbl - 1, "%d x %d", k_res[i][0], k_res[i][1]), lbl[sizeof lbl - 1] = 0;
+        AppendMenuA(res, MF_STRING | (opt_ok() && *OPT_W == k_res[i][0] && *OPT_H == k_res[i][1] ? MF_CHECKED : 0),
+                    ID_RES + i, lbl);
+    }
+    AppendMenuA(m, MF_POPUP, (UINT_PTR)sc, "Scaling\tF12");
+    AppendMenuA(m, MF_POPUP, (UINT_PTR)bars, "Bars beside the picture");
+    AppendMenuA(m, MF_STRING | (g_fullscreen ? MF_CHECKED : 0), ID_FULL, "Fullscreen\tF11");
+    AppendMenuA(m, MF_SEPARATOR, 0, NULL);
+    AppendMenuA(m, MF_POPUP, (UINT_PTR)res, "Game resolution (next game)");
+    GetCursorPos(&at);
+    int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, at.x, at.y, 0, hw, NULL);
+    DestroyMenu(m);                                           /* and its submenus */
+    if (cmd >= ID_SCALE && cmd < ID_SCALE + NMODES) g_mode = cmd - ID_SCALE;
+    else if (cmd == ID_BARS || cmd == ID_BARS + 1) g_bars = cmd - ID_BARS;
+    else if (cmd == ID_FULL) set_fullscreen(hw, !g_fullscreen);
+    else if (cmd >= ID_RES && cmd < ID_RES + NRES) set_game_resolution(k_res[cmd - ID_RES][0], k_res[cmd - ID_RES][1]);
+    if (cmd) settings_save(hw);
+}
+
 static DWORD WINAPI quit_soon(LPVOID unused) {
     (void)unused;
     Sleep(5000);                 /* the game had its chance to save its settings and go */
@@ -360,6 +463,15 @@ static LRESULT CALLBACK wndproc(HWND hw, UINT m, WPARAM w, LPARAM l) {
     case WM_MOUSEMOVE: case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
     case WM_RBUTTONDOWN: case WM_RBUTTONUP: case WM_RBUTTONDBLCLK:
     case WM_MBUTTONDOWN: case WM_MBUTTONUP:
+        /* A right-click on the bars, outside the picture, opens the settings;
+         * on the picture it is the game's (deselect, scroll). */
+        if ((m == WM_RBUTTONDOWN || m == WM_RBUTTONUP) && !g_capture_target) {
+            POINT p = { GET_X_LPARAM(l), GET_Y_LPARAM(l) };
+            if (!PtInRect(&g_dst, p)) {
+                if (m == WM_RBUTTONUP) settings_menu(hw);
+                return 0;
+            }
+        }
         if (m == WM_LBUTTONDOWN || m == WM_RBUTTONDOWN || m == WM_MBUTTONDOWN) SetCapture(hw);
         if ((m == WM_LBUTTONUP || m == WM_RBUTTONUP || m == WM_MBUTTONUP) &&
             !(w & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON)))
@@ -374,23 +486,26 @@ static LRESULT CALLBACK wndproc(HWND hw, UINT m, WPARAM w, LPARAM l) {
         if (LOWORD(l) == HTCLIENT) { SetCursor(NULL); return TRUE; }   /* the game draws its own */
         break;
     case WM_SYSKEYDOWN:
-        if (w == VK_RETURN) { set_fullscreen(hw, !g_fullscreen); return 0; }
+        if (w == VK_RETURN) { set_fullscreen(hw, !g_fullscreen); settings_save(hw); return 0; }
+        if (w == VK_F10) { settings_menu(hw); return 0; }   /* F10 arrives as a system key */
         forward_key(m, w, l);
         return 0;
     case WM_KEYDOWN:
-        if (w == VK_F11) { set_fullscreen(hw, !g_fullscreen); return 0; }
+        if (w == VK_F11) { set_fullscreen(hw, !g_fullscreen); settings_save(hw); return 0; }
         if (w == VK_F12) {
             g_mode = (g_mode + 1) % NMODES;
             fprintf(stderr, "[present] scaling: %s\n", k_mode_names[g_mode]);
+            settings_save(hw);
             return 0;
         }
         forward_key(m, w, l);
         return 0;
     case WM_KEYUP: case WM_SYSKEYUP: case WM_CHAR: case WM_SYSCHAR:
-        if (w == VK_F11 || w == VK_F12) return 0;
+        if (w == VK_F10 || w == VK_F11 || w == VK_F12) return 0;
         forward_key(m, w, l);
         return 0;
     case WM_CLOSE:
+        settings_save(hw);
         if (g_input_hwnd) PostMessageA(g_input_hwnd, WM_CLOSE, 0, 0);
         CloseHandle(CreateThread(NULL, 0, quit_soon, NULL, 0, NULL));
         return 0;
@@ -423,15 +538,24 @@ static DWORD WINAPI present_thread(LPVOID arg) {
      * crisp at any scale, so there is no need to stop at a whole multiple (which
      * on a 1080p screen is 1x, a small window). */
     RECT wa, r = { 0, 0, 0, 0 };
+    char saved[64] = "";
     SystemParametersInfoA(SPI_GETWORKAREA, 0, &wa, 0);
     r.bottom = (wa.bottom - wa.top) * 85 / 100;
     r.right = r.bottom * 4 / 3;
-    int cw0 = r.right, ch0 = r.bottom;
     AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
     int ww = r.right - r.left, wh = r.bottom - r.top;
+    int wx = wa.left + ((wa.right - wa.left) - ww) / 2, wy = wa.top + ((wa.bottom - wa.top) - wh) / 2;
+    GetPrivateProfileStringA("present", "window", "", saved, sizeof saved, g_ini);
+    {
+        int sx, sy, sw, sh;
+        if (sscanf(saved, "%d,%d,%d,%d", &sx, &sy, &sw, &sh) == 4 && sw > 200 && sh > 150) {
+            RECT want = { sx, sy, sx + sw, sy + sh };
+            if (MonitorFromRect(&want, MONITOR_DEFAULTTONULL))           /* still on a screen */
+                wx = sx, wy = sy, ww = sw, wh = sh;
+        }
+    }
     HWND hw = CreateWindowExA(0, "RA2Presenter", "Yuri's Revenge (recomp)", WS_OVERLAPPEDWINDOW,
-                              wa.left + ((wa.right - wa.left) - ww) / 2, wa.top + ((wa.bottom - wa.top) - wh) / 2,
-                              ww, wh, NULL, NULL, wc.hInstance, NULL);
+                              wx, wy, ww, wh, NULL, NULL, wc.hInstance, NULL);
     if (!hw || !d3d_init(hw)) {
         fprintf(stderr, "[present] could not start; run with --classic for the original display\n");
         ExitProcess(5);
@@ -439,8 +563,9 @@ static DWORD WINAPI present_thread(LPVOID arg) {
     ShowWindow(hw, SW_SHOW);
     SetForegroundWindow(hw);
     if (fullscreen) set_fullscreen(hw, 1);
-    fprintf(stderr, "[present] Direct3D 11 presenter, %dx%d window, scaling %s (F12), fullscreen F11\n",
-            cw0, ch0, k_mode_names[g_mode]);
+    GetClientRect(hw, &r);
+    fprintf(stderr, "[present] Direct3D 11 presenter, %ldx%ld window, scaling %s (F12), fullscreen F11, settings F10\n",
+            r.right, r.bottom, k_mode_names[g_mode]);
     for (;;) {
         MSG msg;
         int gw, gh;
@@ -465,7 +590,15 @@ int present_mode_from_name(const char* name) {
 }
 
 void present_start(int mode, int fullscreen) {
-    g_mode = mode;
+    char v[16];
+    settings_path();
+    /* ra2.ini first; a choice on the command line (mode or fullscreen >= 0) wins. */
+    GetPrivateProfileStringA("present", "scale", "sharp", v, sizeof v, g_ini);
+    g_mode = present_mode_from_name(v) >= 0 ? present_mode_from_name(v) : 0;
+    GetPrivateProfileStringA("present", "bars", "blur", v, sizeof v, g_ini);
+    g_bars = _stricmp(v, "black") != 0;
+    if (fullscreen < 0) fullscreen = GetPrivateProfileIntA("present", "fullscreen", 0, g_ini);
+    if (mode >= 0) g_mode = mode;
     input_live(1);
     CloseHandle(CreateThread(NULL, 0, present_thread, (LPVOID)(intptr_t)fullscreen, 0, NULL));
 }

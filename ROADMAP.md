@@ -20,13 +20,16 @@
 The reason for the project. Each item sits on code the recompilation owns,
 not on patches to a binary:
 
-- **Presentation layer.** Done: the presenter (docs/presenter.md). Next on it:
-  a settings overlay, and remembering the window and scaling between runs.
-- **4K.** Give the sidebar's cameo-button array room, or cap its rows, so
-  3840x2160 runs (docs/hires.md). Then centre and scale the 800x600 menus
-  inside a widescreen display.
-- **Resolution.** 1080p and 1440p play (docs/hires.md); a settings entry so a
-  player picks the resolution without editing the INI.
+- **Presentation layer.** Done: the presenter, its settings menu, blurred
+  bars beside the 4:3 menus, remembered settings (docs/presenter.md), and
+  720p to 4K in game (docs/hires.md).
+- **HD voxels.** Vehicles are voxels, drawn by software into a per-facing
+  cache at the game's 1x scale and blitted into the 16-bit surface
+  (`DisableVoxelCache` at 0x00715955). Drawing them sharper means a second,
+  2x layer the presenter composites over the 1x picture, depth-tested against
+  the game's Z-buffer, with the voxel renderer redirected to it. A project of
+  its own: first map the renderer (draw call, cache, Z-buffer), then one unit
+  type end to end.
 - **Higher-resolution art paths**, where a larger source exists or can be
   produced, behind the same asset loaders.
 - **Modern input and audio**: raw mouse, rebindable keys, DirectSound replaced

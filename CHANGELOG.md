@@ -14,8 +14,15 @@ versions follow [SemVer](https://semver.org/).
 - A virtual screen: every screen coordinate the game sees is relative to its
   main window, so the game's windows can sit anywhere (offstage moves them).
 - High resolution and widescreen: 1280x720, 1920x1080 and 2560x1440 tested
-  in game (`res-*` playtest cases, which set `RA2MD.INI` per case). 4K faults
-  in RA2's own sidebar layout, on the shipping code too (docs/hires.md).
+  and 3840x2160 tested in game (`res-*` playtest cases, which set
+  `RA2MD.INI` per case). 4K faulted in RA2's own sidebar layout, on the
+  shipping code too; the lift caps the sidebar's rows at 30 (docs/hires.md).
+- Remaster patches in `run_lift.py`: a line of C after a named instruction,
+  for fixes the original cannot have; `--original` stays unpatched.
+- The presenter's settings menu (F10, or right-click beside the picture):
+  scaling, bars, fullscreen, and the game's resolution, without editing the
+  INI. Blurred bars beside the 4:3 menus. Settings and the window's place are
+  kept in `builda2.ini`.
 - `tools/present_drive.ps1`: clicks the presenter window like a player, for
   testing it.
 - The pipeline for Yuri's Revenge `gamemd.exe` 1.001: RTTI (954 classes), the

@@ -24,7 +24,7 @@ The playtest suite checks each size in a skirmish, and 1080p in a campaign
 | 1280x720 | pass | | |
 | 1920x1080 | pass | pass (Allied, first mission) | sidebar of 16 cameo slots; view 1752x1048 |
 | 2560x1440 | pass | | |
-| 3840x2160 | crash | | RA2's own limit, below |
+| 3840x2160 | pass | | sidebar rows capped at 30 (below) |
 
 A larger resolution shows more of the battlefield, not a bigger picture: the
 art stays at its native size, and the presenter's sharp scaling is what makes
@@ -49,6 +49,19 @@ at `0x00B07E80` with 0x38-byte entries. The next object starts at
 `0x00B0B328`, which leaves about 240 entries, and at 2160 lines the loop runs
 past the end into whatever follows (a null vtable).
 
-The fix is the remaster's to make: give the array room (move it to a larger
-block at lift time, as Gunman moves its fixed-size tables for wide modes) or
-cap the strip's rows. Open (ROADMAP).
+## The fix: cap the rows
+
+The lift caps the row count at 30 (`run_lift.py`, `sidebar_rows_patches`):
+60 buttons, a tab's share of the array. Every place that computes the rows
+divides by 50 the same way (`imul 0x51EB851F`, `sar 4`, `add r, r >> 31`), so
+the patch finds each by that shape in the sidebar code that reads its height
+(`0x00886F9C`) or top (`0x00B0B4F8`) and adds one line of C after the `add`:
+
+```c
+if ((int32_t)eax > 30) eax = 30; /* remaster: sidebar rows, run_lift.py sidebar_rows_patches */
+```
+
+It finds 26 sites. Up to 1440 lines the rows are 27 or fewer and nothing
+changes; at 2160 the strip is 30 rows and the space below it stays empty.
+`--original` runs the shipping code unpatched and still crashes at 4K, which
+is the point: the oracle is the original game, the remaster is the lift.
