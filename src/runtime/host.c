@@ -570,14 +570,24 @@ static DWORD WINAPI recorder(LPVOID unused) {
             for (int k = 0; k < w * h; k += 16) sum = sum * 31 + frame[k];
             fprintf(stderr, "[record] frame %ld checksum %08X\n", g_recorded, sum);
         }
-        /* The recording keeps the size it started with; a later mode (the
-         * menus are 800x600, a game 640x480) is scaled to it, nearest
-         * neighbour. Written at another size, every frame after the mode
-         * change came out sheared. */
-        for (DWORD y = 0; y < g_rec_h && g_ffmpeg; y++) {
-            const uint32_t* src = frame + (y * (DWORD)h / g_rec_h) * (DWORD)w;
-            for (DWORD x = 0; x < g_rec_w; x++) row[x] = src[x * (DWORD)w / g_rec_w];
-            fwrite(row, 4, g_rec_w, g_ffmpeg);
+        /* The recording keeps the size it started with (the menus' 800x600);
+         * a later mode is scaled into it, nearest neighbour, with its aspect
+         * kept: a 16:9 game is letterboxed, not squashed. Written at another
+         * size, every frame after the mode change came out sheared. */
+        {
+            DWORD fw = g_rec_w, fh = (DWORD)((unsigned long long)g_rec_w * h / w);
+            if (fh > g_rec_h) fh = g_rec_h, fw = (DWORD)((unsigned long long)g_rec_h * w / h);
+            DWORD ox = (g_rec_w - fw) / 2, oy = (g_rec_h - fh) / 2;
+            for (DWORD y = 0; y < g_rec_h && g_ffmpeg; y++) {
+                if (y < oy || y >= oy + fh) {
+                    memset(row, 0, g_rec_w * 4);
+                } else {
+                    const uint32_t* src = frame + ((y - oy) * (DWORD)h / fh) * (DWORD)w;
+                    memset(row, 0, g_rec_w * 4);
+                    for (DWORD x = 0; x < fw; x++) row[ox + x] = src[x * (DWORD)w / fw];
+                }
+                fwrite(row, 4, g_rec_w, g_ffmpeg);
+            }
         }
         LeaveCriticalSection(&g_rec_lock);
         if (g_ffmpeg && ++g_recorded == g_record_frames) {

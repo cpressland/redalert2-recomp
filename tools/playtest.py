@@ -116,6 +116,8 @@ def S():
 #                     the picture kept changing (5+ distinct sampled frames)
 #   expect 'alive':   no human player was defeated
 #   expect 'exit':    the exit code
+#   expect 'ini':     RA2MD.INI values for the case's game folder, {section: {key: value}}
+#   expect 'size':    the picture in game is this (w, h)
 CASES = {}
 
 
@@ -180,7 +182,44 @@ for side, emblem in [('allied', 1770), ('soviet', 1772)]:
          300, ingame=True, alive=True)
 
 
-def farm(d):
+def set_ini(text, section, key, value):
+    """RA2MD.INI with [section] key=value set, the section added if missing."""
+    lines = text.split(b'\r\n') if b'\r\n' in text else text.split(b'\n')
+    want = b'[' + section.encode() + b']'
+    out, in_sec, done = [], False, False
+    for l in lines:
+        if l.strip().startswith(b'['):
+            if in_sec and not done:
+                out.append(b'%s=%s' % (key.encode(), str(value).encode()))
+                done = True
+            in_sec = l.strip().lower() == want.lower()
+        elif in_sec and l.split(b'=')[0].strip().lower() == key.lower().encode():
+            if not done:
+                out.append(b'%s=%s' % (key.encode(), str(value).encode()))
+                done = True
+            continue
+        out.append(l)
+    if not done:
+        if not in_sec:
+            out += [b'', want]
+        out.append(b'%s=%s' % (key.encode(), str(value).encode()))
+    return b'\r\n'.join(out)
+
+
+# Hi-res and widescreen: the game's own resolution setting, the in-game
+# picture at that size, in a skirmish and a campaign (docs/hires.md).
+RES = [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)]
+for w, h in RES:
+    video = {'Video': {'ScreenWidth': w, 'ScreenHeight': h}}
+    case('res-%dx%d' % (w, h), SP().press(SINGLE, 'Skirmish', SKIRMISH).press(SKIRMISH, 'StartGame')
+         .waitlog(INGAME).move(w // 2 - 80, h // 2, after=2).key('0x48', after=10),
+         180, ingame=True, size=(w, h), ini=video)
+case('res-campaign-1920x1080', SP().press(SINGLE, 'NewCampaign', CAMPAIGN).press(CAMPAIGN, 1770)
+     .waitlog(INGAME).move(880, 540, after=2).key('0x48', after=10), 300, ingame=True, alive=True,
+     size=(1920, 1080), ini={'Video': {'ScreenWidth': 1920, 'ScreenHeight': 1080}})
+
+
+def farm(d, ini=None):
     """A private game folder for one case, made of hard links to game/.
 
     The game writes into its folder (RA2MD.INI, saves, debug files), so cases
@@ -199,6 +238,9 @@ def farm(d):
                     os.remove(t)
                 text = open(os.path.join(dirpath, f), 'rb').read()
                 text = re.sub(rb'(?im)^Play=\w+', b'Play=no', text)
+                for sec, kv in (ini or {}).items():
+                    for k, v in kv.items():
+                        text = set_ini(text, sec, k, v)
                 open(t, 'wb').write(text)
             elif not os.path.exists(t):
                 os.link(os.path.join(dirpath, f), t)
@@ -210,7 +252,7 @@ def run(name, args, seconds, expect, every, original=False):
     if os.path.isdir(os.path.join(d, 'game')):
         shutil.rmtree(os.path.join(d, 'game'))      # a fresh folder: no saves left over
     os.makedirs(d, exist_ok=True)
-    game = farm(os.path.join(d, 'game'))
+    game = farm(os.path.join(d, 'game'), expect.get('ini'))
     mp4, log = os.path.join(d, 'run.mp4'), os.path.join(d, 'run.log')
     cmd = [HOST, '--headless', '--run', '--debuglog', '--watchdog', str(seconds),
            '--record', mp4, '--exe', os.path.join(game, 'gamemd.exe'), '--game', game] + args
@@ -236,6 +278,7 @@ def run(name, args, seconds, expect, every, original=False):
             opened.append(m.group(1))
     distinct = len(set(re.findall(r'\[record\] frame \d+ (?:at \S+ )?checksum ([0-9A-F]{8})', text)))
     ingame = '[game] Capture_Mouse()' in text
+    modes = re.findall(r'\[headless\] SetDisplayMode\((\d+)x(\d+)x\d+\)', text)
     defeated = re.search(r'\[game\] MPlayer_Defeated\(\) - Player <human player> has been defeated', text)
     seen = ['dialogs ' + ' '.join(opened)] if opened else []
     if ingame:
@@ -247,6 +290,10 @@ def run(name, args, seconds, expect, every, original=False):
             bad.append('dialog 0x%X never opened' % dlg)
     if expect.get('ingame') and not (ingame and distinct >= 5):
         bad.append('never in game' if not ingame else 'picture stopped (%d frames)' % distinct)
+    if 'size' in expect and (not modes or tuple(map(int, modes[-1])) != tuple(expect['size'])):
+        bad.append('in game at %s, wanted %dx%d' % ('x'.join(modes[-1]) if modes else 'no mode', *expect['size']))
+    if modes and ingame:
+        seen.append('%sx%s' % modes[-1])
     if expect.get('alive') and defeated:
         bad.append('the human player was defeated')
     if 'exit' in expect and code != expect['exit']:

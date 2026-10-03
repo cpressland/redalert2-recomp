@@ -22,9 +22,11 @@ not on patches to a binary:
 
 - **Presentation layer.** Done: the presenter (docs/presenter.md). Next on it:
   a settings overlay, and remembering the window and scaling between runs.
-- **Resolution.** The engine takes `ScreenWidth`/`ScreenHeight` from
-  `RA2MD.INI`; the sidebar and UI layout are what break at large sizes. Fix the
-  layout in the lifted code so 1080p and 1440p play properly.
+- **4K.** Give the sidebar's cameo-button array room, or cap its rows, so
+  3840x2160 runs (docs/hires.md). Then centre and scale the 800x600 menus
+  inside a widescreen display.
+- **Resolution.** 1080p and 1440p play (docs/hires.md); a settings entry so a
+  player picks the resolution without editing the INI.
 - **Higher-resolution art paths**, where a larger source exists or can be
   produced, behind the same asset loaders.
 - **Modern input and audio**: raw mouse, rebindable keys, DirectSound replaced
