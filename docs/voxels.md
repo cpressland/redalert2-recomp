@@ -112,11 +112,43 @@ get the four 2x pixels. Anything drawn over a unit afterwards (a health bar,
 a selection box, smoke, a building in front) changes the 1x pixel, and that
 pixel stays 1x. In a skirmish 98% of the units' pixels show at 2x.
 
-**While it is on** the voxel cache is off (`0x007067E4`), so every unit is
-rendered every frame, as the rules' `DisableVoxelCache` would. The 2x frame
-needs twice the game's resolution to fit the presenter's 4096x2160 frame: up
-to 2048x1080; above that the presenter shows the 1x frame.
+**Shadows.** A unit's shadow is a separate render (`0x00706BD0` →
+`0x00707280`: sections through `0x00753F90`, the same finish stage, plotted
+by `0x00756860`) blitted onto the battlefield by the shadow converter, which
+halves each 16-bit pixel under it ((c >> 1) & 0x7BEF, checked on every
+shadowed pixel). The half-pixel offset goes into the plotter's start
+(`[esp+0x5C]`/`[esp+0x5E]` after `0x007568F0`). RA2's shadow is a stipple
+even at 1x: the plotter writes 0 or 1 per position, last write wins, and
+four offset stipples interleaved read as a checkerboard. So the 2x shadow is
+the four passes' union with its holes closed (dilate, then erode, 3x3): a
+solid shadow with a 2x edge, the same 565 half inside. Most of a unit's
+shadow is under the unit; what shows is its edge.
 
-**Not yet:** the shadow, aircraft (their copy is at `0x0073CDE9`), voxel
-animations and debris, and buildings' voxel parts stay 1x. A unit cut off at
-the edge of the staging surface stays 1x.
+![Shadows, 1x and 2x](screenshots/hd-shadows.png)
+
+**Aircraft** (and anything else whose voxel draw goes straight onto the
+battlefield, buildings' voxel parts among them) take a shorter path: no
+staging surface, the part's blit by `0x004AF2A0` lands on the 16-bit
+battlefield, and the host records it the same way as a unit's copy.
+
+![Aircraft and ships, 1x and 2x](screenshots/hd-aircraft.png)
+
+*The Soviet campaign's opening: a Night Hawk and a destroyer.*
+
+**Cost.** While HD voxels are on, the voxel caches are off (units at
+`0x007067E4`, shadows at `0x00706C10`), so every unit and shadow is rendered
+each frame, as the rules' `DisableVoxelCache` and `DisableShadowCache` would.
+The 2x images are remembered by a hash of their 1x pixels, so the three
+extra passes run only for an image not seen before (a new facing or frame):
+in a skirmish 99.99% come from memory. `RA2_FRAME_STATS=1` prints the time
+between frames; it is the same with HD voxels on and off (6.4 ms in a
+skirmish, 16.0 ms in the Soviet mission's opening, headless): the work fits
+inside the game's own pacing.
+
+The 2x frame needs twice the game's resolution to fit the presenter's
+4096x2160 frame: up to 2048x1080; above that the presenter shows the 1x
+frame.
+
+**Not yet:** voxel animations and debris (`VoxelAnimClass`, `0x00749B70`),
+the units drawn by `0x0073C5F0` (copied at `0x0073CDE9`), and a unit cut off
+at the edge of the staging surface stay 1x.

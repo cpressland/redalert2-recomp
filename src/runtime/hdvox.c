@@ -32,6 +32,7 @@
 #include <ddraw.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "hdvox.h"
 
@@ -86,8 +87,47 @@ static void write_bmp(const char* path, const uint8_t* px, int w, int h) {
     fclose(f);
 }
 
+/* The 2x image of a render, remembered by its 1x pixels: a unit standing
+ * still, or turned to a facing seen before, renders the same 1x image, and
+ * its 2x image is taken from here instead of three more passes. The key is
+ * a hash of the 1x pixels inside the render's rect (source x, y at rect[2],
+ * rect[3]; size at rect[4], rect[5]); the value is that rect at 2x. */
+#define MEMO 1024
+typedef struct { uint64_t key; int w, h; uint8_t* px; } memo_t;
+static memo_t g_memo[MEMO];
+static int g_memo_next;
+static long g_memo_hits, g_memo_misses;
+static uint64_t g_key;
+static int g_mx, g_my, g_mw, g_mh;
+
+static int memo_rect(const uint32_t* r) {
+    g_mx = (int)r[2], g_my = (int)r[3], g_mw = (int)r[4], g_mh = (int)r[5];
+    return g_mx >= 0 && g_my >= 0 && g_mw > 0 && g_mh > 0 && g_mx + g_mw <= 256 && g_my + g_mh <= 256;
+}
+
+static uint64_t memo_key(void) {
+    uint64_t k = 1469598103934665603ull ^ ((uint64_t)g_mw << 32 | (uint64_t)g_mh);
+    for (int y = 0; y < g_mh; y++) {
+        const uint8_t* row = VOX_COLOUR + (g_my + y) * 256 + g_mx;
+        for (int x = 0; x < g_mw; x++) k = (k ^ row[x]) * 1099511628211ull;
+    }
+    return k;
+}
+
 int ra2_vox_hd_begin(uint32_t rect) {
     if (!ra2_vox_hd_on || g_busy) return 0;
+    g_key = 0;
+    if (memo_rect((const uint32_t*)(uintptr_t)rect)) {
+        g_key = memo_key();
+        for (int i = 0; i < MEMO; i++)
+            if (g_memo[i].px && g_memo[i].key == g_key && g_memo[i].w == g_mw && g_memo[i].h == g_mh) {
+                for (int y = 0; y < 2 * g_mh; y++)
+                    memcpy(ra2_vox_hd + (2 * g_my + y) * 512 + 2 * g_mx, g_memo[i].px + y * 2 * g_mw, 2 * g_mw);
+                g_memo_hits++;
+                return 0;                         /* no passes: the game goes on with its 1x */
+            }
+    }
+    g_memo_misses++;
     g_busy = 1;
     QueryPerformanceCounter(&g_t0);
     memcpy(g_pass[0], VOX_COLOUR, 65536);
@@ -117,6 +157,17 @@ uint32_t ra2_vox_hd_end(void) {
         for (int y = 0; y < 256; y++)
             for (int x = 0; x < 256; x++)
                 ra2_vox_hd[(2 * y + dy) * 512 + 2 * x + dx] = g_pass[k][y * 256 + x];
+    }
+    if (g_key) {                                  /* remember it */
+        memo_t* m = &g_memo[g_memo_next];
+        g_memo_next = (g_memo_next + 1) % MEMO;
+        free(m->px);
+        m->px = (uint8_t*)malloc((size_t)4 * g_mw * g_mh);
+        if (m->px) {
+            m->key = g_key, m->w = g_mw, m->h = g_mh;
+            for (int y = 0; y < 2 * g_mh; y++)
+                memcpy(m->px + y * 2 * g_mw, ra2_vox_hd + (2 * g_my + y) * 512 + 2 * g_mx, 2 * g_mw);
+        }
     }
     if (g_dump && g_dumped < 40) {
         char path[MAX_PATH];
@@ -150,6 +201,14 @@ static int g_src_x, g_src_y;              /* the part's rect in the voxel buffer
 
 static uint8_t* staging_px(void) { return (uint8_t*)(uintptr_t)((const uint32_t*)(uintptr_t)STAGING)[5]; }
 
+static int g_direct_open, g_dir_x, g_dir_y, g_dir_w, g_dir_h, g_dir_sx, g_dir_sy;
+static uint32_t g_dir_dest;
+static long g_direct;
+static void direct_blit(uint32_t dest, const int32_t* r, const int32_t* pt);
+static int dsurf_read(uint32_t ds, int x, int y, int w, int h, uint16_t* out);
+static void record_image(int x, int y, int w, int h, const uint8_t* idx1, int s1, const uint8_t* idx2, int s2);
+static uint16_t g_before[480 * 1024], g_after[480 * 1024];
+
 /* 0x00707233, before 0x004AF2A0: ecx the destination, then on the stack the
  * source surface, its rect (x, y, w, h) and the destination point. */
 void ra2_vox_hd_blit(uint32_t dest, uint32_t convert, uint32_t esp) {
@@ -158,7 +217,13 @@ void ra2_vox_hd_blit(uint32_t dest, uint32_t convert, uint32_t esp) {
     const int32_t* pt = (const int32_t*)(uintptr_t)a[2];
     (void)convert;
     g_stamp_open = 0;
-    if (!ra2_vox_hd_on || dest != STAGING || !staging_px()) return;
+    g_direct_open = 0;
+    if (!ra2_vox_hd_on) return;
+    if (dest != STAGING) {                        /* aircraft: straight onto the battlefield */
+        direct_blit(dest, r, pt);
+        return;
+    }
+    if (!staging_px()) return;
     if (g_nstamps == MAX_STAMPS) {                /* a unit never copied out: drop the oldest */
         memmove(&g_stamps[0], &g_stamps[1], sizeof g_stamps[0] * (MAX_STAMPS - 1));
         g_nstamps--;
@@ -175,6 +240,14 @@ void ra2_vox_hd_blit(uint32_t dest, uint32_t convert, uint32_t esp) {
 }
 
 void ra2_vox_hd_blitted(void) {
+    if (g_direct_open) {
+        g_direct_open = 0;
+        if (dsurf_read(g_dir_dest, g_dir_x, g_dir_y, g_dir_w, g_dir_h, g_after))
+            record_image(g_dir_x, g_dir_y, g_dir_w, g_dir_h, VOX_COLOUR + g_dir_sy * 256 + g_dir_sx, 256,
+                         ra2_vox_hd + 2 * g_dir_sy * 512 + 2 * g_dir_sx, 512);
+        g_direct++;
+        return;
+    }
     if (!g_stamp_open) return;
     g_stamp_open = 0;
     stamp_t* s = &g_stamps[g_nstamps];
@@ -199,7 +272,7 @@ void ra2_vox_hd_blitted(void) {
 
 /* ---- 3. the unit onto the battlefield ----------------------------------------------- */
 
-typedef struct { int16_t x, y, w, h; } rec_t;     /* then E[w*h], O[4*w*h] (uint16), m[w*h] */
+typedef struct { int16_t x, y, w, h, kind, pad; } rec_t;   /* kind 0 unit, 1 shadow; then E[w*h], O[4*w*h] (uint16), m[w*h] */
 
 #define ARENA (24u << 20)
 static uint8_t* g_arena[2];
@@ -209,7 +282,86 @@ static CRITICAL_SECTION g_pub_lock;
 static int g_pub_lock_init;
 static long g_records, g_published_frames;
 
-static uint16_t g_before[480 * 1024], g_after[480 * 1024];   /* the unit's rect on the battlefield */
+static size_t g_need;
+
+/* A record of w x h battlefield pixels at (x, y): E what the frame should
+ * show at 1x, O the four 2x pixels, m which pixels count. NULL when full. */
+static rec_t* rec_new(int x, int y, int w, int h, uint16_t** E, uint16_t** O, uint8_t** m) {
+    g_need = sizeof(rec_t) + (size_t)w * h * (2 + 8 + 1);
+    if (!g_arena[0]) {
+        g_arena[0] = (uint8_t*)VirtualAlloc(NULL, ARENA, MEM_COMMIT, PAGE_READWRITE);
+        g_arena[1] = (uint8_t*)VirtualAlloc(NULL, ARENA, MEM_COMMIT, PAGE_READWRITE);
+        if (!g_arena[0] || !g_arena[1]) { ra2_vox_hd_on = 0; return NULL; }
+    }
+    if (g_used[g_build] + g_need > ARENA) return NULL;
+    rec_t* r = (rec_t*)(g_arena[g_build] + g_used[g_build]);
+    *E = (uint16_t*)(r + 1);
+    *O = *E + w * h;
+    *m = (uint8_t*)(*O + 4 * w * h);
+    r->x = (int16_t)x, r->y = (int16_t)y, r->w = (int16_t)w, r->h = (int16_t)h, r->kind = 0, r->pad = 0;
+    return r;
+}
+
+static void rec_commit(void) {
+    g_used[g_build] += (g_need + 7) & ~(size_t)7;
+    g_records++;
+}
+
+/* g_before, g_after: the battlefield around a draw (declared above) */
+
+/* An aircraft's part, blitted by 0x004AF2A0 straight onto the 16-bit
+ * battlefield: the battlefield around it before (and after, in
+ * ra2_vox_hd_blitted) the blit. */
+static void direct_blit(uint32_t dest, const int32_t* r, const int32_t* pt) {
+    const uint32_t* ds = (const uint32_t*)(uintptr_t)dest;
+    if (ds[4] != 2) return;
+    int x = pt[0], y = pt[1], w = r[2], h = r[3], sx = r[0], sy = r[1];
+    if (x < 0) sx -= x, w += x, x = 0;
+    if (y < 0) sy -= y, h += y, y = 0;
+    if (x + w > (int)ds[1]) w = (int)ds[1] - x;
+    if (y + h > (int)ds[2]) h = (int)ds[2] - y;
+    if (w <= 0 || h <= 0 || w > 1024 || h > 480 || sx < 0 || sy < 0 || sx + w > 256 || sy + h > 256) return;
+    if (!dsurf_read(dest, x, y, w, h, g_before)) return;
+    g_dir_dest = dest, g_dir_x = x, g_dir_y = y, g_dir_w = w, g_dir_h = h, g_dir_sx = sx, g_dir_sy = sy;
+    g_direct_open = 1;
+}
+
+/* A record for an image drawn onto the battlefield at (x, y), w x h: idx1
+ * its 1x palette indices (stride s1), idx2 the same at 2x (stride s2), and
+ * g_before/g_after the battlefield around the draw. Each index's colour, and
+ * which pixels the image got (the Z-buffer's say), come from what changed. */
+static void record_image(int x, int y, int w, int h, const uint8_t* idx1, int s1, const uint8_t* idx2, int s2) {
+    uint16_t col[256];
+    uint8_t known[256] = { 0 };
+    int got = 0;
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++) {
+            uint8_t v = idx1[j * s1 + i];
+            if (v && g_after[j * w + i] != g_before[j * w + i]) {
+                got++;
+                if (!known[v]) col[v] = g_after[j * w + i], known[v] = 1;
+            }
+        }
+    if (!got) return;
+    uint16_t *E, *O;
+    uint8_t* m;
+    if (!rec_new(x, y, w, h, &E, &O, &m)) return;
+    for (int j = 0; j < h; j++)
+        for (int i = 0; i < w; i++) {
+            int p = j * w + i;
+            uint16_t b = g_before[p], f = g_after[p];
+            m[p] = f != b && idx1[j * s1 + i];
+            E[p] = f;
+            if (!m[p]) continue;
+            for (int q = 0; q < 4; q++) {
+                uint8_t v = idx2[(2 * j + (q >> 1)) * s2 + 2 * i + (q & 1)];
+                /* transparent at 2x: what was there before; an index the 1x
+                 * image never used: the 1x pixel */
+                O[p * 4 + q] = !v ? b : known[v] ? col[v] : f;
+            }
+        }
+    rec_commit();
+}   /* the unit's rect on the battlefield */
 static uint32_t g_copy_dest;
 static int g_cx, g_cy, g_cw, g_ch, g_sx, g_sy, g_copy_open;
 
@@ -302,58 +454,132 @@ void ra2_vox_unit_copied(void) {
             }
     }
     g_nstamps = 0;
-    /* each index's colour on the battlefield, and the pixels the unit got */
-    uint16_t col[256];
-    uint8_t known[256] = { 0 };
-    int got = 0;
-    for (int j = 0; j < h; j++)
-        for (int i = 0; i < w; i++) {
-            uint8_t v = st[(sy + j) * 256 + sx + i];
-            if (v && g_after[j * w + i] != g_before[j * w + i]) {
-                got++;
-                if (!known[v]) col[v] = g_after[j * w + i], known[v] = 1;
+    record_image(g_cx, g_cy, w, h, st + sy * 256 + sx, 256, s2, 512);
+}
+
+/* ---- 3b. shadows --------------------------------------------------------------------- */
+/* 0x00707280 renders a unit's shadow as a 0/1 mask in the voxel buffer (at
+ * 2x too, through the same passes) and blits it onto the battlefield with
+ * the shadow converter, which darkens what is there. Around that blit the
+ * host learns the darkening from the battlefield before and after, and
+ * records the shadow's 2x edge: a 2x pixel in the shadow gets the darkened
+ * colour, one outside it the colour from before. */
+
+static int g_sh_open, g_sh_x, g_sh_y, g_sh_w, g_sh_h, g_sh_sx, g_sh_sy;
+static uint32_t g_sh_dest;
+static long g_sh_records, g_sh_skipped;
+
+/* 0x00707431, before 0x004AF2A0: ecx the destination; on the stack the voxel
+ * surface, the shadow's rect in it and the destination point. */
+void ra2_vox_shadow_blit(uint32_t dest, uint32_t esp) {
+    const uint32_t* a = (const uint32_t*)(uintptr_t)esp;
+    const int32_t* r = (const int32_t*)(uintptr_t)a[1];
+    const int32_t* pt = (const int32_t*)(uintptr_t)a[2];
+    const uint32_t* ds = (const uint32_t*)(uintptr_t)dest;
+    g_sh_open = 0;
+    if (!ra2_vox_hd_on || a[0] != 0x00B2D928u) return;
+    if (ds[4] != 2) { g_sh_skipped++; return; }  /* not the 16-bit battlefield */
+    int x = pt[0], y = pt[1], w = r[2], h = r[3], sx = r[0], sy = r[1];
+    if (x < 0) sx -= x, w += x, x = 0;
+    if (y < 0) sy -= y, h += y, y = 0;
+    if (x + w > (int)ds[1]) w = (int)ds[1] - x;
+    if (y + h > (int)ds[2]) h = (int)ds[2] - y;
+    if (w <= 0 || h <= 0 || w > 1024 || h > 480 || sx < 0 || sy < 0 || sx + w > 256 || sy + h > 256) return;
+    if (!dsurf_read(dest, x, y, w, h, g_before)) return;
+    g_sh_dest = dest, g_sh_x = x, g_sh_y = y, g_sh_w = w, g_sh_h = h, g_sh_sx = sx, g_sh_sy = sy;
+    g_sh_open = 1;
+}
+
+static uint16_t half565(uint16_t c) { return (uint16_t)((c >> 1) & 0x7BEF); }
+
+void ra2_vox_shadow_blitted(void) {
+    if (!g_sh_open) return;
+    g_sh_open = 0;
+    int w = g_sh_w, h = g_sh_h, sx = g_sh_sx, sy = g_sh_sy;
+    if (!dsurf_read(g_sh_dest, g_sh_x, g_sh_y, w, h, g_after)) return;
+    /* the darkening: the classic 16-bit half, or failing that, whatever the
+     * blit did to each colour it touched */
+    int pairs = 0, halves = 0;
+    for (int k = 0; k < w * h; k++)
+        if (g_after[k] != g_before[k]) pairs++, halves += g_after[k] == half565(g_before[k]);
+    if (!pairs) return;
+    int is_half = halves == pairs;
+    uint16_t *E, *O;
+    uint8_t* m;
+    /* RA2's voxel shadow is a stipple even at 1x (its plotter writes 0 or 1
+     * per position, last write wins), so the four passes are four different
+     * stipples, and interleaved they read as a checkerboard. At 2x the
+     * shadow is their union with the holes closed (dilate, then erode, 3x3):
+     * a solid shadow with a 2x edge. */
+    static uint8_t u[2 * 256 * 2 * 256], t[2 * 256 * 2 * 256];
+    int W = 2 * w, H = 2 * h;
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++)
+            u[y * W + x] = ra2_vox_hd[(2 * sy + y) * 512 + 2 * sx + x] != 0;
+    for (int pass = 0; pass < 2; pass++) {       /* 0 dilate u -> t, 1 erode t -> u */
+        const uint8_t* src = pass ? t : u;
+        uint8_t* dst = pass ? u : t;
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++) {
+                int any = 0, all = 1;
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int yy = y + dy, xx = x + dx;
+                        int v = yy >= 0 && yy < H && xx >= 0 && xx < W && src[yy * W + xx];
+                        any |= v, all &= v;
+                    }
+                dst[y * W + x] = (uint8_t)(pass ? all : any);
             }
-        }
-    if (!got) return;
-    size_t need = sizeof(rec_t) + (size_t)w * h * (2 + 8 + 1);
-    if (!g_arena[0]) {
-        g_arena[0] = (uint8_t*)VirtualAlloc(NULL, ARENA, MEM_COMMIT, PAGE_READWRITE);
-        g_arena[1] = (uint8_t*)VirtualAlloc(NULL, ARENA, MEM_COMMIT, PAGE_READWRITE);
-        if (!g_arena[0] || !g_arena[1]) { ra2_vox_hd_on = 0; return; }
     }
-    if (g_used[g_build] + need > ARENA) return;
-    rec_t* r = (rec_t*)(g_arena[g_build] + g_used[g_build]);
-    uint16_t* E = (uint16_t*)(r + 1);
-    uint16_t* O = E + w * h;
-    uint8_t* m = (uint8_t*)(O + 4 * w * h);
-    r->x = (int16_t)g_cx, r->y = (int16_t)g_cy, r->w = (int16_t)w, r->h = (int16_t)h;
+    rec_t* rr = rec_new(g_sh_x, g_sh_y, w, h, &E, &O, &m);
+    if (!rr) return;
+    rr->kind = 1;
     for (int j = 0; j < h; j++)
         for (int i = 0; i < w; i++) {
             int p = j * w + i;
             uint16_t b = g_before[p], f = g_after[p];
-            m[p] = f != b && st[(sy + j) * 256 + sx + i];
+            int dark1 = f != b;
             E[p] = f;
-            if (!m[p]) continue;
+            m[p] = 0;
             for (int q = 0; q < 4; q++) {
-                uint8_t v = s2[(2 * j + (q >> 1)) * 512 + 2 * i + (q & 1)];
-                /* transparent at 2x: what was there before; an index the 1x
-                 * copy never used: the 1x pixel */
-                O[p * 4 + q] = !v ? b : known[v] ? col[v] : f;
+                int in = u[(2 * j + (q >> 1)) * W + 2 * i + (q & 1)];
+                uint16_t v = !in ? b : dark1 ? f : is_half ? half565(b) : f;
+                O[p * 4 + q] = v;
+                m[p] |= v != f;                   /* only where 2x differs from 1x */
             }
         }
-    g_used[g_build] += (need + 7) & ~(size_t)7;
-    g_records++;
+    rec_commit();
+    g_sh_records++;
 }
 
 /* ---- 4. the frame ------------------------------------------------------------------ */
 
-static uint32_t g_layer_surface;                  /* the surface the units went onto */
-
 /* 0x004373B0 entry: a copy into the frame surface ends the frame. */
 void ra2_vox_frame_blit(uint32_t dest, uint32_t argp) {
     (void)argp;
+    static int empty_copies, stats = -1;
+    if (stats < 0) stats = getenv("RA2_FRAME_STATS") != NULL;
+    if (stats && dest == FRAME_SURF) {            /* frame time, HD voxels on or off */
+        static long long last, sum;
+        static long n;
+        LARGE_INTEGER t, hz;
+        QueryPerformanceCounter(&t);
+        if (last) sum += t.QuadPart - last, n++;
+        last = t.QuadPart;
+        if (n == 2000) {
+            QueryPerformanceFrequency(&hz);
+            fprintf(stderr, "[frames] %.2f ms between frame copies (HD voxels %s)\n",
+                    1000.0 * sum / hz.QuadPart / n, ra2_vox_hd_on ? "on" : "off");
+            sum = 0, n = 0;
+        }
+    }
     if (!ra2_vox_hd_on || dest != FRAME_SURF) return;
     if (!g_arena[0]) return;
+    /* The frame surface gets more than one copy a frame: publish when this
+     * frame recorded something, or after a few copies with nothing (no unit
+     * on screen). A stale record shows nothing: the frame no longer matches. */
+    if (!g_used[g_build] && ++empty_copies < 4) return;
+    empty_copies = 0;
     if (!g_pub_lock_init) InitializeCriticalSection(&g_pub_lock), g_pub_lock_init = 1;
     EnterCriticalSection(&g_pub_lock);
     g_build ^= 1;                                 /* publish this frame's records */
@@ -366,7 +592,6 @@ void ra2_vox_frame_blit(uint32_t dest, uint32_t argp) {
         g_last_frame = t.QuadPart;
     }
     LeaveCriticalSection(&g_pub_lock);
-    (void)g_layer_surface;
 }
 
 static uint32_t bgrx(uint16_t p) {
@@ -377,7 +602,7 @@ static uint32_t bgrx(uint16_t p) {
 /* The presenter's 2x frame: frame16 is the 1x frame (16-bit, w x h, pitch in
  * bytes), out gets 2w x 2h BGRX. */
 void hdvox_compose(const uint8_t* frame16, int pitch, int w, int h, uint32_t* out) {
-    static long matched, offered, logged_at;
+    static long matched[2], offered[2], logged_at;
     for (int y = 0; y < h; y++) {
         const uint16_t* row = (const uint16_t*)(frame16 + y * pitch);
         uint32_t* o0 = out + (2 * y) * 2 * w, *o1 = o0 + 2 * w;
@@ -404,9 +629,9 @@ void hdvox_compose(const uint8_t* frame16, int pitch, int w, int h, uint32_t* ou
             for (int i = 0; i < rw; i++) {
                 int x = r->x + i, k = j * rw + i;
                 if (x < 0 || x >= w || !m[k]) continue;
-                offered++;
+                offered[r->kind]++;
                 if (row[x] != E[k]) continue;      /* drawn over since */
-                matched++;
+                matched[r->kind]++;
                 o0[2 * x] = bgrx(O[k * 4]), o0[2 * x + 1] = bgrx(O[k * 4 + 1]);
                 o1[2 * x] = bgrx(O[k * 4 + 2]), o1[2 * x + 1] = bgrx(O[k * 4 + 3]);
             }
@@ -419,8 +644,12 @@ void hdvox_compose(const uint8_t* frame16, int pitch, int w, int h, uint32_t* ou
         LARGE_INTEGER hz;
         QueryPerformanceFrequency(&hz);
         double n = g_published_frames > 1 ? (double)(g_published_frames - 1) : 1.0;
-        fprintf(stderr, "[hdvox] %ld frames, %ld unit records; 2x pixels shown %ld of %ld offered; "
-                "%.1f ms a frame, %.2f of it the 2x renders\n", g_published_frames, g_records, matched, offered,
-                1000.0 * g_frame_ticks / hz.QuadPart / n, 1000.0 * g_hd_ticks / hz.QuadPart / n);
+        fprintf(stderr, "[hdvox] %ld frames, %ld records (%ld shadows, %ld aircraft parts, %ld shadows not on the battlefield); "
+                "2x pixels shown: units %ld of %ld, shadows %ld of %ld; "
+                "%.1f ms a frame, %.2f of it the 2x renders (%ld renders, %ld from memory)\n",
+                g_published_frames, g_records, g_sh_records, g_direct,
+                g_sh_skipped, matched[0], offered[0], matched[1], offered[1],
+                1000.0 * g_frame_ticks / hz.QuadPart / n, 1000.0 * g_hd_ticks / hz.QuadPart / n,
+                g_memo_hits + g_memo_misses, g_memo_hits);
     }
 }

@@ -6,6 +6,11 @@ versions follow [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- HD voxels for shadows and aircraft: a unit's shadow at 2x (solid, with a
+  2x edge, where RA2's own is a 1x stipple), and voxels drawn straight onto
+  the battlefield (aircraft, buildings' voxel parts). 2x images are
+  remembered by their 1x pixels, so the extra passes run only for new
+  images. `RA2_FRAME_STATS=1` prints the time between frames.
 - HD vehicles: voxel units drawn at twice the resolution of the picture.
   The render's last stage runs three more times at half-pixel offsets and
   the four images interleave into one at 2x; the host follows each unit's
