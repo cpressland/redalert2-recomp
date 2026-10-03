@@ -100,6 +100,57 @@ def sidebar_rows_patches(code, cs):
     return out
 
 
+# HD voxels (docs/voxels.md). The finish stage of a unit's render, 0x00754510,
+# turns its depth-sorted section records into pixels in the 256x256 buffer.
+# Run three more times with each span's start moved half a pixel, and the four
+# images interleave into one at twice the resolution: each pass is a complete,
+# hole-free render, so the result is a true 2x sampling of the model. The
+# rasterizers walk 8.8 fixed point in a 256-wide buffer, which a 2x projection
+# would overflow; half-pixel starts stay inside it. Gated at run time by the
+# host (src/runtime/hdvox.c): off, nothing here does anything.
+HD_VOXEL_PATCHES = {
+    # 0x00756590: the span record handed to the rasterizer is at esp+0x20; its
+    # starts, x at +0x18 and y at +0x1A, are 8.8 fixed point.
+    0x0075683E: ('{ extern int16_t ra2_vox_dx, ra2_vox_dy; '
+                 'MEM16(eax + 0x18) += ra2_vox_dx; MEM16(eax + 0x1A) += ra2_vox_dy; } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
+    # 0x00706ED0, just after the finish stage returned its rect (eax): the
+    # extra passes, with the same argument (ecx = esp+0x4C). It preserves
+    # ebx/esi/edi/ebp; ecx and edx are dead here.
+    0x00706FEF: ('{ extern int ra2_vox_hd_begin(uint32_t); extern void ra2_vox_hd_pass(int); '
+                 'extern uint32_t ra2_vox_hd_end(void); '
+                 'if (ra2_vox_hd_begin(eax)) { for (int _k = 1; _k < 4; _k++) { ra2_vox_hd_pass(_k); '
+                 'ecx = esp + 0x4C; RECOMP_CALL(sub_00754510); } eax = ra2_vox_hd_end(); } } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
+    # 0x00706ED0 blits the 1x render onto the battlefield with 0x004AF2A0
+    # (ecx the destination surface, edx the palette converter; on the stack
+    # the source surface, its rect, the destination point, ...). Just before
+    # and just after that call the host looks at the destination, to place
+    # the 2x image where the 1x one went.
+    0x00707233: ('{ extern void ra2_vox_hd_blit(uint32_t, uint32_t, uint32_t); ra2_vox_hd_blit(ecx, edx, esp); } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
+    0x00707235: ('{ extern void ra2_vox_hd_blitted(void); ra2_vox_hd_blitted(); } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
+    # 0x004373B0, the surface-to-surface blitter, after its `sub esp, 0x4C`:
+    # its copy into the frame surface ends a frame, and the host publishes
+    # the 2x layer it built during it.
+    0x004373B0: ('{ extern void ra2_vox_frame_blit(uint32_t, uint32_t); ra2_vox_frame_blit(ecx, esp + 0x4C + 4); } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
+    # 0x00706640: no voxel cache while HD voxels are on, so every unit is
+    # rendered (and at 2x) each frame: a cache key of -1 is the path the
+    # rules' DisableVoxelCache already takes.
+    0x007067E4: ('{ extern int ra2_vox_hd_on; if (ra2_vox_hd_on) { eax = 0xFFFFFFFFu; MEM32(esp + 0x5C) = eax; } } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
+    # 0x0073B140: a unit's finished staging image (body, turret, barrel)
+    # copied onto the battlefield by 0x004373B0: dest rect, staging surface,
+    # source rect on the stack, the destination surface in ecx.
+    0x0073B43F: ('{ extern void ra2_vox_unit_copy(uint32_t, uint32_t); ra2_vox_unit_copy(ecx, esp); } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
+    0x0073B446: ('{ extern void ra2_vox_unit_copied(void); ra2_vox_unit_copied(); } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
+}
+
+
 def apply_patches(body, patches):
     """Add each patch's C after the line that lifts its instruction."""
     for va, c in patches.items():
@@ -178,7 +229,8 @@ def main():
     # (its docs/bringup.md); off by default in lift32 only because Fury3 leans
     # on the imprecision.
     patches = sidebar_rows_patches(code, cs)
-    print('[*] remaster patches: %d (sidebar rows capped at %d)' % (len(patches), SIDEBAR_ROWS_MAX))
+    patches.update(HD_VOXEL_PATCHES)
+    print('[*] remaster patches: %d (sidebar rows capped at %d; HD voxels)' % (len(patches), SIDEBAR_ROWS_MAX))
     lifter = Lifter(iat_map=iat, lifted=set(byaddr), precise_carry=True, precise_sbb=True)
     os.makedirs(args.out, exist_ok=True)
     for fn in os.listdir(args.out):                 # a smaller lift must not leave stale chunks

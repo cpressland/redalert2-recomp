@@ -28,8 +28,10 @@
 
 #include "input.h"
 #include "present.h"
+#include "hdvox.h"
 
 int host_frame(uint32_t* out, int maxw, int maxh, int* w, int* h);   /* host.c */
+int host_frame_hd(uint32_t* out, int maxw, int maxh, int* w, int* h);   /* host.c: 2x, HD voxels */
 
 static const char* const k_mode_names[] = { "sharp", "smooth", "crt", "nearest", "integer" };
 #define NMODES 5
@@ -387,6 +389,7 @@ static void settings_save(HWND hw) {
     WritePrivateProfileStringA("present", "scale", k_mode_names[g_mode], g_ini);
     WritePrivateProfileStringA("present", "bars", g_bars ? "blur" : "black", g_ini);
     WritePrivateProfileStringA("present", "fullscreen", g_fullscreen ? "1" : "0", g_ini);
+    WritePrivateProfileStringA("present", "hdvoxels", ra2_vox_hd_on ? "1" : "0", g_ini);
     if (hw && !g_fullscreen && !IsIconic(hw)) {
         RECT r;
         GetWindowRect(hw, &r);
@@ -420,7 +423,7 @@ static void set_game_resolution(int w, int h) {
     fprintf(stderr, "[present] game resolution %dx%d (the next game opens at it)\n", w, h);
 }
 
-enum { ID_SCALE = 100, ID_BARS = 200, ID_FULL = 300, ID_RES = 400 };
+enum { ID_SCALE = 100, ID_BARS = 200, ID_FULL = 300, ID_RES = 400, ID_HDVOX = 500 };
 
 static void settings_menu(HWND hw) {             /* at the mouse */
     POINT at;
@@ -439,6 +442,7 @@ static void settings_menu(HWND hw) {             /* at the mouse */
     AppendMenuA(m, MF_POPUP, (UINT_PTR)sc, "Scaling\tF12");
     AppendMenuA(m, MF_POPUP, (UINT_PTR)bars, "Bars beside the picture");
     AppendMenuA(m, MF_STRING | (g_fullscreen ? MF_CHECKED : 0), ID_FULL, "Fullscreen\tF11");
+    AppendMenuA(m, MF_STRING | (ra2_vox_hd_on ? MF_CHECKED : 0), ID_HDVOX, "HD vehicles (voxels at 2x)");
     AppendMenuA(m, MF_SEPARATOR, 0, NULL);
     AppendMenuA(m, MF_POPUP, (UINT_PTR)res, "Game resolution (next game)");
     GetCursorPos(&at);
@@ -447,6 +451,7 @@ static void settings_menu(HWND hw) {             /* at the mouse */
     if (cmd >= ID_SCALE && cmd < ID_SCALE + NMODES) g_mode = cmd - ID_SCALE;
     else if (cmd == ID_BARS || cmd == ID_BARS + 1) g_bars = cmd - ID_BARS;
     else if (cmd == ID_FULL) set_fullscreen(hw, !g_fullscreen);
+    else if (cmd == ID_HDVOX) ra2_vox_hd_on = !ra2_vox_hd_on;      /* takes effect next frame */
     else if (cmd >= ID_RES && cmd < ID_RES + NRES) set_game_resolution(k_res[cmd - ID_RES][0], k_res[cmd - ID_RES][1]);
     if (cmd) settings_save(hw);
 }
@@ -573,7 +578,11 @@ static DWORD WINAPI present_thread(LPVOID arg) {
             TranslateMessage(&msg);
             DispatchMessageA(&msg);
         }
-        if (host_frame(frame, 4096, 2160, &gw, &gh)) {
+        if (host_frame_hd(frame, 4096, 2160, &gw, &gh)) {     /* the picture at 2x */
+            InterlockedExchange(&g_gw, gw);
+            InterlockedExchange(&g_gh, gh);
+            draw(frame, 2 * gw, 2 * gh);
+        } else if (host_frame(frame, 4096, 2160, &gw, &gh)) {
             InterlockedExchange(&g_gw, gw);
             InterlockedExchange(&g_gh, gh);
             draw(frame, gw, gh);
@@ -598,6 +607,7 @@ void present_start(int mode, int fullscreen) {
     GetPrivateProfileStringA("present", "bars", "blur", v, sizeof v, g_ini);
     g_bars = _stricmp(v, "black") != 0;
     if (fullscreen < 0) fullscreen = GetPrivateProfileIntA("present", "fullscreen", 0, g_ini);
+    if (!ra2_vox_hd_on) ra2_vox_hd_on = GetPrivateProfileIntA("present", "hdvoxels", 1, g_ini);   /* --hd-voxels forces it */
     if (mode >= 0) g_mode = mode;
     input_live(1);
     CloseHandle(CreateThread(NULL, 0, present_thread, (LPVOID)(intptr_t)fullscreen, 0, NULL));

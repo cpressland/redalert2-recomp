@@ -65,16 +65,58 @@ nothing (`ICALL: unresolved VA 0x007DF9C0`), returned 0, and nothing was
 drawn. Three entries were affected (`0x007DF9C0`, `0x007DFAE0`,
 `0x007DFC00`). The fix is in disasm32's `past_padding` (pcrecomp #44), and the playtest suite now fails a run on any unresolved `ICALL`.
 
-## Toward HD voxels
+## HD voxels
 
-What the map says a sharper vehicle needs:
+With HD voxels on (the presenter's settings menu, F10; `--hd-voxels`),
+vehicles are drawn at twice the resolution of the rest of the picture. The
+game is untouched: everything it draws, reads and caches is what it would
+have been, and the 2x pixels exist only in the presenter's frame.
 
-- **A bigger buffer.** 256x256 is a static array; 2x is 512x512, moved at
-  lift time the way the sidebar's rows are capped (`run_lift.py` patches).
-- **A larger projection.** The view setup (`0x00753D00`, the matrices at
-  `0x00887430`/`0x00887470`) sets the scale; doubling it doubles the image.
-- **Somewhere to put it.** The battlefield surface is 1x. A 2x image needs
-  a layer the presenter composites over the upscaled frame, at the place the
-  blit (`0x00707480`) would have drawn it, kept only where the 1x frame still
-  shows what the blit wrote (so anything drawn over the unit later wins).
-- **The cache** holds 1x images; a 2x layer needs its own, or no cache.
+![1x and 2x](screenshots/hd-voxels.png)
+
+*Left, the frame scaled up; right, the same frame with HD voxels.*
+
+**Rendering at 2x.** A plain 2x projection is out: the rasterizers walk 8.8
+fixed point in a 256-wide buffer and plot each voxel as a fixed splat, so a
+bigger image overflows their coordinates and leaves holes between voxels.
+Instead the render's finish stage (`0x00754510`, records to pixels) runs three
+more times with every span starting half a pixel further left, up, or both
+(the span record's starts at `+0x18`/`+0x1A`, patched at `0x0075683E`). Each
+pass is a complete, hole-free 1x render of the model sampled at a different
+offset; interleaved, the four are one image at 2x. The finish stage is only
+the last step, so the passes cost little: about 1 ms a frame in a skirmish.
+
+**Following the image onto the battlefield.** A unit is built in a 256x256
+staging surface (`[0x00B1D13C]`): each part (body, turret, barrel) is blitted
+into it through a remap, then the whole is copied onto the battlefield with
+the house palette, lighting and the Z-buffer (`0x004373B0`, called at
+`0x0073B446`). Rather than reimplement those blitters, the host watches them:
+
+- around each part's blit into staging it learns the remap from what the blit
+  wrote, and keeps the part's 2x image remapped (a "stamp");
+- around the copy onto the battlefield it learns each index's final colour
+  and which pixels the unit really got (the Z-buffer's say) from the
+  battlefield before and after, and records the unit's 2x colours for them
+  (a stamp's pixels count only where a later part did not cover them; where
+  the 2x image is transparent, what was under the unit shows);
+- the copy into the frame surface (`[0x00887308]`, the primary) ends the
+  frame, and the records are published.
+
+The battlefield surface is locked by the game while it draws; its pixels are
+at `DSurface+0x14` and DirectDraw gives the pitch.
+
+**Showing it.** The presenter asks for the frame at 2x
+(`host_frame_hd`): each 1x pixel four times, except where a unit's record
+says the finished frame still shows exactly what the unit wrote there; those
+get the four 2x pixels. Anything drawn over a unit afterwards (a health bar,
+a selection box, smoke, a building in front) changes the 1x pixel, and that
+pixel stays 1x. In a skirmish 98% of the units' pixels show at 2x.
+
+**While it is on** the voxel cache is off (`0x007067E4`), so every unit is
+rendered every frame, as the rules' `DisableVoxelCache` would. The 2x frame
+needs twice the game's resolution to fit the presenter's 4096x2160 frame: up
+to 2048x1080; above that the presenter shows the 1x frame.
+
+**Not yet:** the shadow, aircraft (their copy is at `0x0073CDE9`), voxel
+animations and debris, and buildings' voxel parts stay 1x. A unit cut off at
+the edge of the staging surface stays 1x.

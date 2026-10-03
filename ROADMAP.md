@@ -23,11 +23,9 @@ not on patches to a binary:
 - **Presentation layer.** Done: the presenter, its settings menu, blurred
   bars beside the 4:3 menus, remembered settings (docs/presenter.md), and
   720p to 4K in game (docs/hires.md).
-- **HD voxels.** The renderer is mapped (docs/voxels.md): units render into a
-  static 256x256 8-bit buffer, are cached per facing, and are converted onto
-  the 1x battlefield. Next: a 512x512 buffer and a doubled projection at lift
-  time, then a 2x layer the presenter composites over the frame where the 1x
-  frame still shows what the blit wrote; one unit type end to end first.
+- **HD voxels.** Done for units (docs/voxels.md). Next: their shadows,
+  aircraft (copied onto the battlefield at 0x0073CDE9), voxel animations and
+  debris, buildings' voxel parts, and 2x above a game resolution of 2048x1080.
 - **Higher-resolution art paths**, where a larger source exists or can be
   produced, behind the same asset loaders.
 - **Modern input and audio**: raw mouse, rebindable keys, DirectSound replaced

@@ -6,6 +6,13 @@ versions follow [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- HD vehicles: voxel units drawn at twice the resolution of the picture.
+  The render's last stage runs three more times at half-pixel offsets and
+  the four images interleave into one at 2x; the host follows each unit's
+  image through the game's own blits and the presenter shows the 2x pixels
+  wherever the finished frame still shows the unit (docs/voxels.md). In the
+  settings menu, on by default; `--hd-voxels` for headless runs, and
+  `--hd-voxels-dump DIR` for 1x/2x renders and 2x frames.
 - The voxel renderer, mapped (docs/voxels.md): the draw path from
   TechnoClass's vtable to the rasterizers, the 256x256 colour and depth
   buffers, the shade table and the cache, as groundwork for HD voxels.

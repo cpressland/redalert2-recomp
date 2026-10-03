@@ -23,6 +23,7 @@
 #include "input.h"
 #include "oracle.h"
 #include "present.h"
+#include "hdvox.h"
 
 extern const uint32_t ra2_entry_va;    /* recomp_dispatch.c */
 
@@ -545,6 +546,56 @@ int host_frame(uint32_t* out, int maxw, int maxh, int* pw, int* ph) {
     return 1;
 }
 
+/* host_frame at twice the size, with the HD voxel layer (hdvox.c); 0 when HD
+ * voxels are off, the frame is not 16-bit, or 2x would not fit. *pw, *ph get
+ * the game's (1x) size. */
+int host_frame_hd(uint32_t* out, int maxw, int maxh, int* pw, int* ph) {
+    DDSURFACEDESC d;
+    if (!ra2_vox_hd_on) return 0;
+    EnterCriticalSection(&g_primary_lock);
+    if (!g_primary) { LeaveCriticalSection(&g_primary_lock); return 0; }
+    memset(&d, 0, sizeof d);
+    d.dwSize = sizeof d;
+    if (g_primary->lpVtbl->Lock(g_primary, NULL, &d, DDLOCK_WAIT | DDLOCK_READONLY, NULL) != DD_OK) {
+        LeaveCriticalSection(&g_primary_lock);
+        return 0;
+    }
+    int w = (int)d.dwWidth, h = (int)d.dwHeight;
+    int ok = d.ddpfPixelFormat.dwRGBBitCount == 16 && 2 * w <= maxw && 2 * h <= maxh;
+    if (ok) hdvox_compose((const uint8_t*)d.lpSurface, (int)d.lPitch, w, h, out);
+    g_primary->lpVtbl->Unlock(g_primary, NULL);
+    LeaveCriticalSection(&g_primary_lock);
+    *pw = w;
+    *ph = h;
+    return ok;
+}
+
+/* --hd-voxels-dump DIR: every 10 s, the 2x frame as frame_NN.bmp (24-bit). */
+static const char* g_hd_frames_dir;
+
+static DWORD WINAPI hd_frame_dumper(LPVOID unused) {
+    static uint32_t px[4096 * 2160];
+    (void)unused;
+    for (int n = 0; n < 60; ) {
+        int w, h;
+        Sleep(10000);
+        if (!host_frame_hd(px, 4096, 2160, &w, &h)) continue;
+        w *= 2, h *= 2;
+        char path[MAX_PATH];
+        _snprintf(path, sizeof path - 1, "%s/frame_%02d.bmp", g_hd_frames_dir, n++), path[sizeof path - 1] = 0;
+        FILE* f = fopen(path, "wb");
+        if (!f) continue;
+        BITMAPINFOHEADER ih = { sizeof ih, w, -h, 1, 32, BI_RGB };
+        uint32_t off = 14 + sizeof ih, size = off + (uint32_t)w * h * 4, zero = 0;
+        fwrite("BM", 1, 2, f);
+        fwrite(&size, 4, 1, f), fwrite(&zero, 4, 1, f), fwrite(&off, 4, 1, f);
+        fwrite(&ih, sizeof ih, 1, f);
+        fwrite(px, 4, (size_t)w * h, f);
+        fclose(f);
+    }
+    return 0;
+}
+
 static DWORD WINAPI recorder(LPVOID unused) {
     static uint32_t frame[4096 * 2160], row[4096];
     DWORD next = GetTickCount();
@@ -866,6 +917,13 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--scale") && i + 1 < argc && present_mode_from_name(argv[i + 1]) >= 0)
             g_scale_mode = present_mode_from_name(argv[++i]);
         else if (!strcmp(argv[i], "--debuglog")) g_debuglog = 1;
+        else if (!strcmp(argv[i], "--hd-voxels")) hdvox_configure(1, NULL);
+        else if (!strcmp(argv[i], "--hd-voxels-dump") && i + 1 < argc) {
+            static char dir[MAX_PATH];
+            GetFullPathNameA(argv[++i], MAX_PATH, dir, NULL);   /* the run chdirs into game/ */
+            hdvox_configure(1, dir);
+            g_hd_frames_dir = dir;
+        }
         else if (!strcmp(argv[i], "--original")) g_original = 1;
         else if (!strcmp(argv[i], "--probe") && i + 1 < argc && g_nprobe < MAX_PROBES)
             g_probe[g_nprobe++] = strtoul(argv[++i], NULL, 0);
@@ -879,7 +937,8 @@ int main(int argc, char** argv) {
         else {
             printf("usage: ra2 [--run] [--headless | --classic | [--fullscreen] [--scale sharp|smooth|crt|nearest|integer]] [--record out.mp4] [--frames N] [--exe game\\gamemd.exe] [--game game]\n"
                    "           [--press DLG:CTRL@s] [--select DLG:CTRL=N@s] [--waitlog TEXT@s] [--move|--click x,y@s] [--key [c][s][a]+vk@s] [--wait VA@s]\n"
-                   "           [--watchdog S] [--probe VA] [--debuglog] [--original] [--native-trace] [--callbacks]\n");
+                   "           [--watchdog S] [--probe VA] [--debuglog] [--original] [--native-trace] [--callbacks]\n"
+                   "           [--hd-voxels] [--hd-voxels-dump DIR]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
         }
@@ -933,6 +992,7 @@ int main(int argc, char** argv) {
         if (g_record) CloseHandle(CreateThread(NULL, 0, recorder, NULL, 0, NULL));
         input_start();
         if (!g_classic && !g_headless) present_start(g_scale_mode, g_fullscreen);
+        if (g_hd_frames_dir) CloseHandle(CreateThread(NULL, 0, hd_frame_dumper, NULL, 0, NULL));
         return oracle_run(exe_full, RA2_IMAGE_BASE, shims, nshims, hooks, 1);
     }
 
@@ -958,6 +1018,7 @@ int main(int argc, char** argv) {
     if (input_scripted() && !g_headless) { fprintf(stderr, "a scripted run needs --headless\n"); return 1; }
     input_start();
     if (!g_classic && !g_headless) present_start(g_scale_mode, g_fullscreen);
+    if (g_hd_frames_dir) CloseHandle(CreateThread(NULL, 0, hd_frame_dumper, NULL, 0, NULL));
     printf("  entering 0x%08X\n\n", ra2_entry_va);
     fflush(stdout);
     native32_call_guest(ra2_entry_va, 0, NULL);

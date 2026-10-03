@@ -21,15 +21,17 @@ build\ra2.exe --run --classic                     # the original display
 
 ## Settings
 
-The settings menu has the scaling, the bars, fullscreen, and the game's
-resolution. The presenter remembers its own choices, and the window's place
-and size, in `builda2.ini`:
+The settings menu has the scaling, the bars, fullscreen, HD vehicles, and
+the game's resolution. The presenter remembers its own choices, and the window's place
+and size, in `build
+a2.ini`:
 
 ```ini
 [present]
 scale=sharp
 bars=blur
 fullscreen=0
+hdvoxels=1
 window=100,100,1600,900
 ```
 
@@ -40,6 +42,10 @@ A `--scale` or `--fullscreen` on the command line wins over the file.
   picture stretched over the whole window, so the menus sit in a frame rather
   than a hole; `black` is plain letterboxing. The shader draws the fill first
   (`mode 5`, a 5x5 box of wide taps) and the picture on top.
+- **HD vehicles** (on unless turned off) draws voxel units at twice the
+  resolution of the rest of the picture ([voxels.md](voxels.md)); the
+  presenter's picture is then the game's at 2x, up to a game resolution of
+  2048x1080.
 - **Game resolution** applies to the next game (skirmish or mission); the
   menus are always 800x600. It is written to the game's `RA2MD.INI`
   `[Video] ScreenWidth/ScreenHeight`, and to the game's options in memory

@@ -26,6 +26,7 @@ Westwood's own code, recompiled.
 | Host (`build/ra2.exe`, 32-bit, pcrecomp `native32`) | boots: CRT and 3,952 static constructors, `WinMain`, COM servers, window, DirectDraw at 800x600x16, the Westwood logo and the intro movie through Bink, and the **main menu**, drawn and animated ([bringup.md](docs/bringup.md)) |
 | Playtest suite (`tools/playtest.py`) | **28 of 28 passing**: every menu screen, every way back, a skirmish start to score screen, the Allied and Soviet campaigns, 720p to 4K: scripted by button name, run in parallel, and `--original` runs the same script on the shipping code to tell lift bugs from host bugs ([testing.md](docs/testing.md)) |
 | Presenter (the default display) | the game in its own Direct3D 11 window: sharp-bilinear, smooth, CRT, nearest or integer scaling (F12), borderless fullscreen (F11), native resolution on high-DPI screens; `--classic` is the original DirectDraw ([presenter.md](docs/presenter.md)) |
+| HD vehicles | Voxel units drawn at 2x in the presenter, from four half-pixel-offset renders of each model; about 1 ms a frame ([voxels.md](docs/voxels.md)) |
 | High resolution / widescreen | 720p, 1080p, 1440p and 4K in game, skirmish and campaign, picked from the presenter's settings menu (F10) or `RA2MD.INI`; 4K needed a fix to RA2's own sidebar ([hires.md](docs/hires.md)) |
 | Headless mode | `--headless --record out.mp4 --frames N`: hidden window, no mode change, the primary surface recorded to ffmpeg ([host.md](docs/host.md)) |
 | Conformance harness | `tools/conformance.py`: **8/8** boot milestones up to the main menu, lift 0 errors, against `conformance.json`; fails on regression |
@@ -178,7 +179,7 @@ checkout with all four merged into `main`.
 - [docs/host.md](docs/host.md): the host, headless DirectDraw, registration-free COM
 - [docs/presenter.md](docs/presenter.md): the presenter window, scaling, the virtual screen
 - [docs/hires.md](docs/hires.md): high resolution and widescreen, and the 4K sidebar fix
-- [docs/voxels.md](docs/voxels.md): the voxel renderer, mapped, and the road to HD voxels
+- [docs/voxels.md](docs/voxels.md): the voxel renderer, mapped, and HD voxels
 - [docs/bringup.md](docs/bringup.md): every wall so far and its fix
 - [docs/testing.md](docs/testing.md): the playtest suite, scripted input and the `--original` oracle
 - [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md)
