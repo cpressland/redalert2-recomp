@@ -251,3 +251,20 @@ The main menu then draws completely: Single Player, Internet, Network, Movies
 & Credits, Options, Exit Game, the animated backdrop, and `Version 1.001TUC`.
 With movie sound back on (7), a five-minute run plays the whole intro and
 reaches the menu: conformance 8/8.
+
+## 11. Into the game: what the playtest suite turned up
+
+Driving the game through every menu and mode (`tools/playtest.py`,
+[testing.md](testing.md)) found these, each pinned on the lift or the host by
+running the same script on the shipping code (`--original`):
+
+| Symptom | Whose | Cause and fix |
+|---|---|---|
+| A crash pressing Skirmish: execute of `0x006163A0` | catalog | Two window procedures named only by `mov reg, imm` and sitting behind jump tables were never catalogued (`0x006163A0`, `0x00618D40`). Seeded in `work/run_seeds.json`. |
+| In-game recording sheared into stripes | host | The game plays at 640x480 and the menus at 800x600; the recorder now scales every frame to the size it started with. |
+| A fault in the recorder at the mode switch and at exit, on both machines | host | The recorder held a raw pointer to a primary surface the game had released (and at exit, the DirectDraw object that owns it). The host now holds its own reference, swaps it under a lock, and drops it when `IDirectDraw::Release` really frees the object. |
+| The battlefield black | host | Edge scrolling. The last menu press left the scripted cursor at x=720, and the game runs at 640x480: past the right edge, so auto-scroll ran the view to the map's black margin and held it there, on both machines. The host now keeps the cursor on screen across a mode change (as Windows does), and in-game cases put it in the middle of the battlefield. |
+| The idle player defeated | neither | At start cell 52,97 the AI beats a player who does nothing in about 4.5 minutes, on the shipping code too. The suite now plays a skirmish through to that defeat, the score screen and back. |
+| Exit Game hung after "Theme::Stop(0) - Fading" | lift (toolkit) | The main thread spins at `0x0040A047` waiting for the sound thread, and native32 only handed the machine over at native calls. Lifted loops now yield it every 65,536 back-edges (pcrecomp #42). |
+| LAN New Game: execute of `0x24` | lift (toolkit) | `push 0x00617250; jmp 0x00618B9D` (an argument and a jump to the procedure's own epilogue) was lifted as a call returning to `0x00617250`, which restarted the procedure on a scrambled stack (pcrecomp #43). |
+| The campaign emblems did nothing | script | They are static controls, and a static passes its clicks to the dialog. `--press` on a static now clicks the dialog at that point. |

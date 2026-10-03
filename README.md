@@ -15,7 +15,7 @@ This is not [OpenRA](https://www.openra.net/). OpenRA is a separate engine
 that loads the original assets and reimplements the rules; this project runs
 Westwood's own code, recompiled.
 
-## Status: **v0.1.0-dev, bring-up.** The whole game lifts with 0 errors, and the recompiled game boots, plays the full intro cinematic and reaches the main menu.
+## Status: **v0.1.0-dev, bring-up.** The whole game lifts with 0 errors, and the recompiled game plays: every main-menu screen, skirmishes from setup to the score screen, and both campaigns into their first mission, driven headless by a scripted test suite.
 
 | Stage | State |
 |---|---|
@@ -24,6 +24,7 @@ Westwood's own code, recompiled.
 | Function catalog (`disasm32`) | 22,682 functions, 89.0% of `.text`, 15 minutes |
 | Lift (`run_lift.py --all`) | 23,458 functions, 5.1M lines of C, **0 lift errors** |
 | Host (`build/ra2.exe`, 32-bit, pcrecomp `native32`) | boots: CRT and 3,952 static constructors, `WinMain`, COM servers, window, DirectDraw at 800x600x16, the Westwood logo and the intro movie through Bink, and the **main menu**, drawn and animated ([bringup.md](docs/bringup.md)) |
+| Playtest suite (`tools/playtest.py`) | **23 of 23 passing**: every menu screen, every way back, a skirmish start to score screen, the Allied and Soviet campaigns: scripted by button name, run in parallel, and `--original` runs the same script on the shipping code to tell lift bugs from host bugs ([testing.md](docs/testing.md)) |
 | Headless mode | `--headless --record out.mp4 --frames N`: hidden window, no mode change, the primary surface recorded to ffmpeg ([host.md](docs/host.md)) |
 | Conformance harness | `tools/conformance.py`: **8/8** boot milestones up to the main menu, lift 0 errors, against `conformance.json`; fails on regression |
 
@@ -39,6 +40,15 @@ Westwood logo and the Yuri's Revenge intro, decoded by Bink into the game's
 own primary surface.
 
 ![Main menu](docs/screenshots/main-menu.png)
+
+In game, from the playtest suite: the Allied campaign's first mission, the
+Soviet one, a skirmish, its setup screen and the score screen at the end.
+
+| | |
+|---|---|
+| ![Allied campaign](docs/screenshots/campaign-allied.png) | ![Soviet campaign](docs/screenshots/campaign-soviet.png) |
+| ![Skirmish](docs/screenshots/skirmish.png) | ![Skirmish setup](docs/screenshots/skirmish-setup.png) |
+| ![Skirmish score](docs/screenshots/skirmish-score.png) | |
 
 | | | |
 |---|---|---|
@@ -132,7 +142,14 @@ build\ra2.exe --run                             # run it in a window (at the mac
 build\ra2.exe --headless --run --watchdog 60    # no window, no mode change, stop after 60 s
 build\ra2.exe --headless --run --record out.mp4 --frames 300
 py -3 tools\conformance.py                      # boot milestones + lift health vs the baseline
+py -3 tools\playtest.py --jobs 3                 # every menu and game mode, scripted (docs\testing.md)
+py -3 tools\playtest.py campaign-allied --original   # the same script on the shipping code
 ```
+
+Scripted input (headless only): `--press DLG:CTRL@s` presses a menu button by
+dialog and control ID once that screen is open, `--select DLG:CTRL=N@s`,
+`--waitlog TEXT@s`, `--key`, `--move`, `--click`, `--wait`. `--original` runs
+the shipping machine code under the same host.
 
 Diagnostics: `--debuglog` (the game's own debug log), `--native-trace`
 (every call into Windows), `--callbacks`,
@@ -145,15 +162,17 @@ Steps 5 and 6 above. `PCRECOMP` (environment, for `run_lift.py`) and
 `-DPCRECOMP=` (CMake) point at a toolkit checkout other than `..\tools`; the
 lifter and the runtime must come from the same tree.
 
-The lift needs pcrecomp #41 (a generator fix found here). Until it is merged,
-lift from that branch:
-`git -C ..	ools fetch origin fix/generate-midbody-fallthrough` and check it out.
+The lift needs three pcrecomp fixes found here and not yet merged: #41
+(mid-body fall-through), #42 (lifted loops yield the machine) and #43
+(push/jmp inside a body). Until they are, lift from a checkout with all three
+merged into `main`.
 
 ## Documentation
 
 - [docs/RECON.md](docs/RECON.md): the binaries, the build and the class map
 - [docs/host.md](docs/host.md): the host, headless DirectDraw, registration-free COM
 - [docs/bringup.md](docs/bringup.md): every wall so far and its fix
+- [docs/testing.md](docs/testing.md): the playtest suite, scripted input and the `--original` oracle
 - [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md)
 
 ## License

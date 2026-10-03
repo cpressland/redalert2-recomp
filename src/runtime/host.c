@@ -20,14 +20,18 @@
 
 #include "native32.h"
 #include "recomp_trace.h"
+#include "input.h"
+#include "oracle.h"
 
 extern const uint32_t ra2_entry_va;    /* recomp_dispatch.c */
 
 #define RA2_IMAGE_BASE 0x00400000u
 /* A NULL module is the process exe, which is the host; mean the guest. */
 #define GUEST_MODULE(h) ((h) ? (h) : RA2_IMAGE_BASE)
+static int g_last_dialog;             /* resource ID of the last RT_DIALOG looked up */
 
 static DWORD g_watchdog_s;
+static int   g_original;            /* --original: run the shipping code (oracle.c) */
 static int   g_headless;
 
 #define ARG(n) MEM32(g_esp + 4 + 4 * (n))
@@ -74,7 +78,7 @@ static void shim_CreateWindowExA(void) {
     if (h && (style & WS_VISIBLE)) ShowWindow(h, SW_SHOWNOACTIVATE);
     fprintf(stderr, "[headless] CreateWindowExA(\"%s\", %dx%d) from sub_%08X -> invisible hwnd %p\n",
             gstr(ARG(2)), (int)ARG(6), (int)ARG(7), g_cur_func, (void*)h);
-    if (!g_game_hwnd) g_game_hwnd = h;
+    if (!g_game_hwnd) g_game_hwnd = g_input_hwnd = h;
     g_eax = (uint32_t)(uintptr_t)h;
     g_esp += 4 + 12 * 4;
 }
@@ -159,9 +163,47 @@ static void shim_CreateDialogIndirectParamA(void) {
         SetLayeredWindowAttributes(h, 0, 0, LWA_ALPHA);
         if (saved & WS_VISIBLE) ShowWindow(h, SW_SHOWNOACTIVATE);
     }
-    fprintf(stderr, "[headless] CreateDialogIndirectParamA(%s) -> hwnd %p\n", top ? "top-level" : "child", (void*)h);
+    if (h) input_dialog_created(h, g_last_dialog);
     g_eax = (uint32_t)(uintptr_t)h;
     g_esp += 4 + 5 * 4;
+}
+
+/* Scripted input answers the game's polls (input.c). */
+static void shim_GetCursorPos(void) {
+    POINT* p = (POINT*)(uintptr_t)ARG(0);
+    g_eax = input_cursor(p) ? TRUE : GetCursorPos(p);
+    g_esp += 4 + 1 * 4;
+}
+
+static void shim_GetKeyState(void) {
+    g_eax = (uint16_t)input_key_state((int)ARG(0), GetKeyState((int)ARG(0)));
+    g_esp += 4 + 1 * 4;
+}
+
+static void shim_GetAsyncKeyState(void) {
+    g_eax = (uint16_t)input_key_state((int)ARG(0), GetAsyncKeyState((int)ARG(0)));
+    g_esp += 4 + 1 * 4;
+}
+
+/* The game is single-instance by named mutex (an AppMutex at 0x006BBE56 and
+ * friends), and a second copy exits at once. Headless runs are tests, and
+ * tools/playtest.py runs several at a time, so each process gets its own
+ * names (civ3 does the same). */
+static void shim_CreateMutexA(void) {
+    char name[MAX_PATH];
+    const char* n = (const char*)(uintptr_t)ARG(2);
+    if (n) _snprintf(name, sizeof name - 1, "%s.%lu", n, GetCurrentProcessId()), name[sizeof name - 1] = 0;
+    g_eax = (uint32_t)(uintptr_t)CreateMutexA((LPSECURITY_ATTRIBUTES)(uintptr_t)ARG(0), (BOOL)ARG(1),
+                                             n ? name : NULL);
+    g_esp += 4 + 3 * 4;
+}
+
+static void shim_OpenMutexA(void) {
+    char name[MAX_PATH];
+    const char* n = (const char*)(uintptr_t)ARG(2);
+    _snprintf(name, sizeof name - 1, "%s.%lu", n ? n : "", GetCurrentProcessId()), name[sizeof name - 1] = 0;
+    g_eax = (uint32_t)(uintptr_t)OpenMutexA(ARG(0), (BOOL)ARG(1), name);
+    g_esp += 4 + 3 * 4;
 }
 
 static void shim_ShowWindow(void) {
@@ -193,6 +235,13 @@ static void shim_ShowWindow(void) {
  * The game never learns the difference: it blits into "the primary" and that
  * surface is what --record reads. */
 static IDirectDrawSurface* g_primary;
+/* The recorder reads the primary from its own thread, and a mode change
+ * releases the primary on the game's. With only the pointer, the recorder
+ * sometimes locked a freed surface (a fault in the recorder, on the lifted and
+ * the original code alike, at the 800x600 -> 640x480 switch). So the host holds
+ * a reference to the current primary, swaps it under this lock, and the
+ * recorder reads it under the same lock. */
+static CRITICAL_SECTION g_primary_lock;
 static volatile LONG g_frames;       /* blits into the primary */
 
 static const char* g_record;
@@ -202,6 +251,8 @@ typedef HRESULT (WINAPI *dd_coop_t)(IDirectDraw*, HWND, DWORD);
 typedef HRESULT (WINAPI *dd_mode_t)(IDirectDraw*, DWORD, DWORD, DWORD);
 typedef HRESULT (WINAPI *dd_getmode_t)(IDirectDraw*, LPDDSURFACEDESC);
 typedef HRESULT (WINAPI *dd_surf_t)(IDirectDraw*, LPDDSURFACEDESC, LPDIRECTDRAWSURFACE*, IUnknown*);
+typedef HRESULT (WINAPI *dds_bltfast_t)(IDirectDrawSurface*, DWORD, DWORD, IDirectDrawSurface*, LPRECT, DWORD);
+static dds_bltfast_t g_real_bltfast;
 typedef HRESULT (WINAPI *dds_blt_t)(IDirectDrawSurface*, LPRECT, IDirectDrawSurface*, LPRECT, DWORD, LPDDBLTFX);
 static dd_coop_t g_real_coop;
 static dd_mode_t g_real_mode;
@@ -230,6 +281,7 @@ static HRESULT WINAPI hl_SetDisplayMode(IDirectDraw* dd, DWORD w, DWORD h, DWORD
     /* A real mode change resizes the fullscreen window to the new screen;
      * the game then sizes and centres things by it (the Bink intro). */
     if (g_game_hwnd) SetWindowPos(g_game_hwnd, NULL, 0, 0, (int)w, (int)h, SWP_NOZORDER | SWP_NOACTIVATE);
+    input_mode_changed((int)w, (int)h);
     fprintf(stderr, "[headless] SetDisplayMode(%lux%lux%lu) -> kept, not applied\n", w, h, bpp);
     return DD_OK;
 }
@@ -253,6 +305,18 @@ static HRESULT WINAPI hl_Blt(IDirectDrawSurface* dst, LPRECT r, IDirectDrawSurfa
             fprintf(stderr, "[headless] frame %ld blitted to the primary\n", n);
     }
     return g_real_blt(dst, r, src, sr, flags, fx);
+}
+
+static void count_frame(void) {
+    LONG n = InterlockedIncrement(&g_frames);
+    if (n == 1 || n == 10 || n == 100 || n % 1000 == 0)
+        fprintf(stderr, "[headless] frame %ld blitted to the primary\n", n);
+}
+
+static HRESULT WINAPI hl_BltFast(IDirectDrawSurface* dst, DWORD x, DWORD y, IDirectDrawSurface* src,
+                                 LPRECT sr, DWORD flags) {
+    if (dst == g_primary) count_frame();
+    return g_real_bltfast(dst, x, y, src, sr, flags);
 }
 
 static HRESULT WINAPI hl_CreateSurface(IDirectDraw* dd, LPDDSURFACEDESC d, LPDIRECTDRAWSURFACE* out,
@@ -281,7 +345,13 @@ static HRESULT WINAPI hl_CreateSurface(IDirectDraw* dd, LPDDSURFACEDESC d, LPDIR
             d->dwFlags, d->ddsCaps.dwCaps, c.dwWidth, c.dwHeight, primary ? " primary" : "", hr,
             hr == DD_OK ? (void*)*out : NULL);
     if (hr == DD_OK && primary) {
+        IDirectDrawSurface* old;
+        (*out)->lpVtbl->AddRef(*out);
+        EnterCriticalSection(&g_primary_lock);
+        old = g_primary;
         g_primary = *out;
+        LeaveCriticalSection(&g_primary_lock);
+        if (old) old->lpVtbl->Release(old);
         if (!g_real_blt) {
             void** vt = *(void***)g_primary;
             DWORD old;
@@ -289,9 +359,28 @@ static HRESULT WINAPI hl_CreateSurface(IDirectDraw* dd, LPDDSURFACEDESC d, LPDIR
             VirtualProtect(&vt[5], 4, PAGE_READWRITE, &old);
             vt[5] = (void*)hl_Blt;
             VirtualProtect(&vt[5], 4, old, &old);
+            g_real_bltfast = (dds_bltfast_t)vt[7];             /* IDirectDrawSurface::BltFast */
+            VirtualProtect(&vt[7], 4, PAGE_READWRITE, &old);
+            vt[7] = (void*)hl_BltFast;
+            VirtualProtect(&vt[7], 4, old, &old);
         }
     }
     return hr;
+}
+
+/* The game releases its DirectDraw object on the way out, and every surface
+ * dies with it, the primary the host holds a reference to included. The
+ * recorder then locked a freed surface (a fault at exit, on the shipping code
+ * too). So when the object really goes, the primary goes with it. */
+typedef ULONG (WINAPI *dd_release_t)(IDirectDraw*);
+static dd_release_t g_real_ddrelease;
+
+static ULONG WINAPI hl_DDRelease(IDirectDraw* dd) {
+    EnterCriticalSection(&g_primary_lock);
+    ULONG r = g_real_ddrelease(dd);
+    if (r == 0) g_primary = NULL;
+    LeaveCriticalSection(&g_primary_lock);
+    return r;
 }
 
 static void patch(void** vt, int slot, void* fn, void** real) {
@@ -308,6 +397,7 @@ static void shim_DirectDrawCreate(void) {
     HRESULT hr = DirectDrawCreate(guid, out, (IUnknown*)(uintptr_t)ARG(2));
     if (hr == DD_OK && !g_real_surf) {
         void** vt = *(void***)*out;
+        patch(vt, 2, (void*)hl_DDRelease, (void**)&g_real_ddrelease);
         patch(vt, 6, (void*)hl_CreateSurface, (void**)&g_real_surf);
         patch(vt, 12, (void*)hl_GetDisplayMode, (void**)&g_real_getmode);
         patch(vt, 20, (void*)hl_SetCooperativeLevel, (void**)&g_real_coop);
@@ -323,6 +413,7 @@ static void shim_DirectDrawCreate(void) {
  * (REPO_RULES 10/13). --frames N stops after N recorded frames and closes the
  * file properly; a process killed mid-recording leaves an mp4 with no index. */
 static FILE* g_ffmpeg;
+static DWORD g_rec_w, g_rec_h;
 static long g_recorded;
 
 static void record_close(void) {
@@ -341,17 +432,22 @@ static DWORD WINAPI recorder(LPVOID unused) {
         DDSURFACEDESC d;
         next += 33;
         { LONG wait = (LONG)(next - GetTickCount()); if (wait > 0) Sleep(wait); }
-        if (!g_primary) continue;
+        EnterCriticalSection(&g_primary_lock);
+        if (!g_primary) { LeaveCriticalSection(&g_primary_lock); continue; }
         memset(&d, 0, sizeof d);
         d.dwSize = sizeof d;
-        if (g_primary->lpVtbl->Lock(g_primary, NULL, &d, DDLOCK_WAIT | DDLOCK_READONLY, NULL) != DD_OK)
+        if (g_primary->lpVtbl->Lock(g_primary, NULL, &d, DDLOCK_WAIT | DDLOCK_READONLY, NULL) != DD_OK) {
+            LeaveCriticalSection(&g_primary_lock);
             continue;
+        }
         if (!g_ffmpeg) {
             char cmd[MAX_PATH * 2];
             _snprintf(cmd, sizeof cmd - 1, "ffmpeg -y -loglevel error -f rawvideo -pix_fmt bgr0 "
                       "-s %lux%lu -r 30 -i - -c:v libx264 -pix_fmt yuv420p \"%s\"",
                       d.dwWidth, d.dwHeight, g_record);
             g_ffmpeg = _popen(cmd, "wb");
+            g_rec_w = d.dwWidth < 4096 ? d.dwWidth : 4096;
+            g_rec_h = d.dwHeight < 2160 ? d.dwHeight : 2160;
             fprintf(stderr, "[record] %lux%lu %lu bpp -> %s\n", d.dwWidth, d.dwHeight,
                     d.ddpfPixelFormat.dwRGBBitCount, g_record);
         }
@@ -364,21 +460,27 @@ static DWORD WINAPI recorder(LPVOID unused) {
             for (DWORD y = 0; y < h; y++)
                 memcpy(frame + y * rowb, (const uint8_t*)d.lpSurface + y * d.lPitch, rowb);
             g_primary->lpVtbl->Unlock(g_primary, NULL);
+            LeaveCriticalSection(&g_primary_lock);
             if (g_recorded == 0 || g_recorded % 300 == 0) {
                 uint32_t sum = 0;
                 for (DWORD k = 0; k < rowb * h; k += 64) sum = sum * 31 + frame[k];
                 fprintf(stderr, "[record] frame %ld at %p checksum %08X\n", g_recorded, d.lpSurface, sum);
             }
-            for (DWORD y = 0; y < h && g_ffmpeg; y++) {
-                const uint8_t* src = frame + y * rowb;
-                for (DWORD x = 0; x < w; x++) {
+            /* The recording keeps the size it started with; a later mode (the
+             * menus are 800x600, a game 640x480) is scaled to it, nearest
+             * neighbour. Written at another size, every frame after the mode
+             * change came out sheared. */
+            for (DWORD y = 0; y < g_rec_h && g_ffmpeg; y++) {
+                const uint8_t* src = frame + (y * h / g_rec_h) * rowb;
+                for (DWORD x = 0; x < g_rec_w; x++) {
+                    DWORD sx = x * w / g_rec_w;
                     if (bpp == 2) {
-                        uint16_t p = ((const uint16_t*)src)[x];
+                        uint16_t p = ((const uint16_t*)src)[sx];
                         uint32_t r = (p >> 11) & 31, g = (p >> 5) & 63, b = p & 31;
                         row[x] = (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
-                    } else row[x] = ((const uint32_t*)src)[x];
+                    } else row[x] = ((const uint32_t*)src)[sx];
                 }
-                fwrite(row, 4, w, g_ffmpeg);
+                fwrite(row, 4, g_rec_w, g_ffmpeg);
             }
         }
         if (g_ffmpeg && ++g_recorded == g_record_frames) {
@@ -463,6 +565,7 @@ static void shim_CoCreateInstance(void) {
  * menu returned at once as if Exit had been picked (bringup.md, 9). */
 
 static void shim_FindResourceA(void) {
+    if (ARG(2) == (uint32_t)(uintptr_t)RT_DIALOG) g_last_dialog = (int)ARG(1);
     g_eax = (uint32_t)(uintptr_t)FindResourceA((HMODULE)(uintptr_t)GUEST_MODULE(ARG(0)),
                                                (LPCSTR)(uintptr_t)ARG(1), (LPCSTR)(uintptr_t)ARG(2));
     g_esp += 4 + 3 * 4;
@@ -507,6 +610,11 @@ static native32_shim_t g_headless_shims[] = {
     { "ShowWindow", shim_ShowWindow },
     { "RegisterClassA", shim_RegisterClassA },
     { "CreateDialogIndirectParamA", shim_CreateDialogIndirectParamA },
+    { "GetCursorPos", shim_GetCursorPos },
+    { "CreateMutexA", shim_CreateMutexA },
+    { "OpenMutexA", shim_OpenMutexA },
+    { "GetKeyState", shim_GetKeyState },
+    { "GetAsyncKeyState", shim_GetAsyncKeyState },
     { "GetActiveWindow", shim_focus_query },
     { "GetForegroundWindow", shim_focus_query },
     { "GetFocus", shim_focus_query },
@@ -524,14 +632,15 @@ static native32_shim_t g_headless_shims[] = {
 static int g_debuglog;
 
 void ra2_hook_004068E0(void) {
-    if (g_debuglog) {
+    if (g_debuglog || input_wants_log()) {
         char buf[1024];
         const char* fmt = (const char*)(uintptr_t)MEM32(g_esp + 4);
         size_t n;
         _vsnprintf(buf, sizeof buf - 1, fmt, (va_list)(uintptr_t)(g_esp + 8));
         buf[sizeof buf - 1] = 0;
         n = strlen(buf);
-        fprintf(stderr, "[game] %s%s", buf, n && buf[n - 1] == '\n' ? "" : "\n");
+        input_log_line(buf);
+        if (g_debuglog) fprintf(stderr, "[game] %s%s", buf, n && buf[n - 1] == '\n' ? "" : "\n");
     }
     g_esp += 4;                        /* ret */
 }
@@ -636,10 +745,12 @@ int main(int argc, char** argv) {
     int run = 0;
     for (int i = 1; i < argc; i++) {
         int n = recomp_trace_arg(argc, argv, i);
+        if (!n) n = input_arg(argc, argv, i);
         if (n) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = 1;
         else if (!strcmp(argv[i], "--debuglog")) g_debuglog = 1;
+        else if (!strcmp(argv[i], "--original")) g_original = 1;
         else if (!strcmp(argv[i], "--probe") && i + 1 < argc && g_nprobe < MAX_PROBES)
             g_probe[g_nprobe++] = strtoul(argv[++i], NULL, 0);
         else if (!strcmp(argv[i], "--record") && i + 1 < argc) g_record = argv[++i];
@@ -651,7 +762,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--callbacks")) native32_trace_callbacks = 1;
         else {
             printf("usage: ra2 [--run] [--headless] [--record out.mp4] [--frames N] [--exe game\\gamemd.exe] [--game game]\n"
-                   "           [--watchdog S] [--probe VA] [--debuglog] [--native-trace] [--callbacks]\n");
+                   "           [--press DLG:CTRL@s] [--select DLG:CTRL=N@s] [--waitlog TEXT@s] [--move|--click x,y@s] [--key [c][s][a]+vk@s] [--wait VA@s]\n"
+                   "           [--watchdog S] [--probe VA] [--debuglog] [--original] [--native-trace] [--callbacks]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
         }
@@ -679,6 +791,21 @@ int main(int argc, char** argv) {
         SetDllDirectoryA(game_full);
     }
 
+    InitializeCriticalSection(&g_primary_lock);
+    native32_shim_t* shims = g_headless ? g_headless_shims : g_shims;
+    int nshims = g_headless ? (int)(sizeof g_headless_shims / sizeof g_headless_shims[0])
+                            : (int)(sizeof g_shims / sizeof g_shims[0]);
+    if (g_original) {
+        /* The shipping machine code under the same host, shims and input
+         * (oracle.c): the reference a lifted run is compared against. */
+        static const oracle_hook_t hooks[] = { { 0x004068E0u, ra2_hook_004068E0 } };
+        if (!SetCurrentDirectoryA(game_full)) { fprintf(stderr, "cannot enter %s\n", game_full); return 1; }
+        if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
+        if (g_record) CloseHandle(CreateThread(NULL, 0, recorder, NULL, 0, NULL));
+        input_start();
+        return oracle_run(exe_full, RA2_IMAGE_BASE, shims, nshims, hooks, 1);
+    }
+
     native32_init();
     AddVectoredExceptionHandler(0, crash);
     printf("Red Alert 2: Yuri's Revenge recomp host\n  lifted functions in dispatch: %u\n",
@@ -687,10 +814,7 @@ int main(int argc, char** argv) {
     uint32_t span = native32_map(exe_full, RA2_IMAGE_BASE);
     if (!span) { fprintf(stderr, "cannot map %s at 0x%08X\n", exe_full, RA2_IMAGE_BASE); return 1; }
     printf("  mapped %s: 0x%08X-0x%08X\n", exe, RA2_IMAGE_BASE, RA2_IMAGE_BASE + span);
-    if (g_headless ? native32_bind(RA2_IMAGE_BASE, g_headless_shims,
-                                   (int)(sizeof g_headless_shims / sizeof g_headless_shims[0]))
-                   : native32_bind(RA2_IMAGE_BASE, g_shims, (int)(sizeof g_shims / sizeof g_shims[0])))
-        return 1;
+    if (native32_bind(RA2_IMAGE_BASE, shims, nshims)) return 1;
     printf("  guest exe %s\n", g_guest_exe);
 
     if (!run) {
@@ -701,6 +825,8 @@ int main(int argc, char** argv) {
     if (!SetCurrentDirectoryA(game_full)) { fprintf(stderr, "cannot enter %s\n", game_full); return 1; }
     if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
     if (g_record) CloseHandle(CreateThread(NULL, 0, recorder, NULL, 0, NULL));
+    if (input_scripted() && !g_headless) { fprintf(stderr, "a scripted run needs --headless\n"); return 1; }
+    input_start();
     printf("  entering 0x%08X\n\n", ra2_entry_va);
     fflush(stdout);
     native32_call_guest(ra2_entry_va, 0, NULL);

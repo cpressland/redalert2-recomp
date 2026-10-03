@@ -2,15 +2,17 @@
 
 ## Next
 
-1. **Scripted input** (`--key vk@s`, `--click x,y@s`, The Movies' shape):
-   skip the intro, and click from the main menu into a skirmish, headless.
-2. **The exit path's `ebp = 0x43` fault** after `Main_Loop` returns
-   (bringup.md, 8): something on that path returns with ebp clobbered.
+1. **Play, not just reach.** In-game input for the suite: select and deploy
+   the MCV, build a power plant and a barracks, train a unit, and check them in
+   the game's own log. Then a mission played to its win.
+2. **Every menu screen in the suite**: the remaining Options screens, Load
+   with a save present, the LAN host screen's Start, the WOnline screens as far
+   as they go without servers.
 3. **Record the audio** with `--record`.
 4. **Native reference run.** Record the original `gamemd.exe` under offstage at
    the console for the same seconds of startup, as ground truth to compare
    frames against.
-5. **Upstream the generator fix** (pcrecomp #41).
+5. **Upstream the toolkit fixes**: pcrecomp #41, #42, #43.
 6. **Setup.cmd** end to end from a clean folder, then the shortcut.
 
 ## The remaster

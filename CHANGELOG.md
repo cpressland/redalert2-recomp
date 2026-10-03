@@ -26,7 +26,24 @@ versions follow [SemVer](https://semver.org/).
 - `--debuglog`: the game's own debug log, through `run_lift.py` `HOOKS` (a
   lifted function given a host body).
 
+- `tools/playtest.py`, the playtest suite (civ3's framework adapted): every
+  menu screen and way back, a skirmish from setup to the score screen, both
+  campaigns into their first mission, in parallel with per-case game folders,
+  logs, recordings and contact sheets. 23 of 23 cases passing.
+- Scripted input for headless runs: `--press DLG:CTRL@s` presses a menu button
+  by dialog and control ID once that dialog is open, `--select`, `--waitlog`,
+  `--key`, `--move`, `--click`, `--wait`. `tools/dialogs.py` maps all 98 menu
+  dialogs to their controls.
+- `--original`: the shipping machine code under the same host, shims and
+  script, to tell lift bugs from host bugs.
+
 ### Fixed
+- Exit Game hung on a spin-wait for the sound thread (pcrecomp #42), and the
+  LAN game setup screen crashed on a mis-lifted `push; jmp` (pcrecomp #43).
+- The recorder faulted at the mode switch and at exit, locking surfaces the
+  game had released; it now holds its own reference.
+- In-game recordings were sheared: frames are scaled to the recording's size.
+- Two window procedures were missing from the catalog (seeded).
 - Movies froze for good at a timing-dependent moment: the game pauses Bink
   while its window is not active, and a hidden window never is. Headless
   delivers every activation message as "active".
