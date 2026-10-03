@@ -234,7 +234,7 @@ def run(name, args, seconds, expect, every, original=False):
     for m in re.finditer(r'\[dialog\] open 0x([0-9A-F]+)', text):
         if not opened or opened[-1] != m.group(1):
             opened.append(m.group(1))
-    distinct = len(set(re.findall(r'\[record\] frame \d+ at \S+ checksum ([0-9A-F]{8})', text)))
+    distinct = len(set(re.findall(r'\[record\] frame \d+ (?:at \S+ )?checksum ([0-9A-F]{8})', text)))
     ingame = '[game] Capture_Mouse()' in text
     defeated = re.search(r'\[game\] MPlayer_Defeated\(\) - Player <human player> has been defeated', text)
     seen = ['dialogs ' + ' '.join(opened)] if opened else []

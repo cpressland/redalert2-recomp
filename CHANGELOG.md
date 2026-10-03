@@ -6,6 +6,15 @@ versions follow [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- The presenter, now the default display: the game in its own Direct3D 11
+  window with sharp-bilinear, smooth, CRT, nearest and integer scaling (F12),
+  borderless fullscreen (F11, Alt+Enter), native resolution on high-DPI
+  screens, and input mapped through the scaling. `--classic` keeps the
+  original exclusive-fullscreen DirectDraw.
+- A virtual screen: every screen coordinate the game sees is relative to its
+  main window, so the game's windows can sit anywhere (offstage moves them).
+- `tools/present_drive.ps1`: clicks the presenter window like a player, for
+  testing it.
 - The pipeline for Yuri's Revenge `gamemd.exe` 1.001: RTTI (954 classes), the
   function catalog (22,682 functions), and the lift driver `run_lift.py`
   (23,458 functions, 0 lift errors).
@@ -38,6 +47,8 @@ versions follow [SemVer](https://semver.org/).
   script, to tell lift bugs from host bugs.
 
 ### Fixed
+- A race between the recorder writing a frame and the watchdog closing the
+  recording ended some runs with 0xC0000409; the pipe is now locked.
 - Exit Game hung on a spin-wait for the sound thread (pcrecomp #42), and the
   LAN game setup screen crashed on a mis-lifted `push; jmp` (pcrecomp #43).
 - The recorder faulted at the mode switch and at exit, locking surfaces the

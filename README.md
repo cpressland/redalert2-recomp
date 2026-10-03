@@ -25,6 +25,7 @@ Westwood's own code, recompiled.
 | Lift (`run_lift.py --all`) | 23,458 functions, 5.1M lines of C, **0 lift errors** |
 | Host (`build/ra2.exe`, 32-bit, pcrecomp `native32`) | boots: CRT and 3,952 static constructors, `WinMain`, COM servers, window, DirectDraw at 800x600x16, the Westwood logo and the intro movie through Bink, and the **main menu**, drawn and animated ([bringup.md](docs/bringup.md)) |
 | Playtest suite (`tools/playtest.py`) | **23 of 23 passing**: every menu screen, every way back, a skirmish start to score screen, the Allied and Soviet campaigns: scripted by button name, run in parallel, and `--original` runs the same script on the shipping code to tell lift bugs from host bugs ([testing.md](docs/testing.md)) |
+| Presenter (the default display) | the game in its own Direct3D 11 window: sharp-bilinear, smooth, CRT, nearest or integer scaling (F12), borderless fullscreen (F11), native resolution on high-DPI screens; `--classic` is the original DirectDraw ([presenter.md](docs/presenter.md)) |
 | Headless mode | `--headless --record out.mp4 --frames N`: hidden window, no mode change, the primary surface recorded to ffmpeg ([host.md](docs/host.md)) |
 | Conformance harness | `tools/conformance.py`: **8/8** boot milestones up to the main menu, lift 0 errors, against `conformance.json`; fails on regression |
 
@@ -138,7 +139,9 @@ use `py -3`), and a PATH change that needs a new terminal window.
 
 ```
 build\ra2.exe                                   # dry run: map and bind, print the entry point
-build\ra2.exe --run                             # run it in a window (at the machine, not over RDP)
+build\ra2.exe --run                             # play: our own window, sharp scaling (F12), fullscreen (F11)
+build\ra2.exe --run --fullscreen --scale crt     # borderless fullscreen, CRT look
+build\ra2.exe --run --classic                   # the original exclusive-fullscreen DirectDraw
 build\ra2.exe --headless --run --watchdog 60    # no window, no mode change, stop after 60 s
 build\ra2.exe --headless --run --record out.mp4 --frames 300
 py -3 tools\conformance.py                      # boot milestones + lift health vs the baseline
@@ -171,6 +174,7 @@ merged into `main`.
 
 - [docs/RECON.md](docs/RECON.md): the binaries, the build and the class map
 - [docs/host.md](docs/host.md): the host, headless DirectDraw, registration-free COM
+- [docs/presenter.md](docs/presenter.md): the presenter window, scaling, the virtual screen
 - [docs/bringup.md](docs/bringup.md): every wall so far and its fix
 - [docs/testing.md](docs/testing.md): the playtest suite, scripted input and the `--original` oracle
 - [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md)

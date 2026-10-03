@@ -46,7 +46,7 @@ MILESTONES = [
 
 
 def distinct_frames(out):
-    return len(set(re.findall(r'\[record\] frame \d+ at \S+ checksum ([0-9A-F]{8})', out)))
+    return len(set(re.findall(r'\[record\] frame \d+ (?:at \S+ )?checksum ([0-9A-F]{8})', out)))
 
 
 def boot(seconds):

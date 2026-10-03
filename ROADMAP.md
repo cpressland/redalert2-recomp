@@ -20,10 +20,8 @@
 The reason for the project. Each item sits on code the recompilation owns,
 not on patches to a binary:
 
-- **Presentation layer.** The game already draws into a primary surface the
-  host creates (host.md). Replace the DirectDraw blit-to-screen with a D3D11
-  or Vulkan present: integer and smooth scaling, borderless window, vsync,
-  high-DPI, no DDrawCompat.
+- **Presentation layer.** Done: the presenter (docs/presenter.md). Next on it:
+  a settings overlay, and remembering the window and scaling between runs.
 - **Resolution.** The engine takes `ScreenWidth`/`ScreenHeight` from
   `RA2MD.INI`; the sidebar and UI layout are what break at large sizes. Fix the
   layout in the lifted code so 1080p and 1440p play properly.

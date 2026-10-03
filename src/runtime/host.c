@@ -22,6 +22,7 @@
 #include "recomp_trace.h"
 #include "input.h"
 #include "oracle.h"
+#include "present.h"
 
 extern const uint32_t ra2_entry_va;    /* recomp_dispatch.c */
 
@@ -33,6 +34,10 @@ static int g_last_dialog;             /* resource ID of the last RT_DIALOG looke
 static DWORD g_watchdog_s;
 static int   g_original;            /* --original: run the shipping code (oracle.c) */
 static int   g_headless;
+/* How the game is shown. The presenter (present.c) is the default: the display
+ * is virtual, as headless, and our own Direct3D 11 window shows it. --classic is
+ * the game's own exclusive-fullscreen DirectDraw, as it shipped. */
+static int   g_classic, g_fullscreen = 0, g_scale_mode = 0;
 
 #define ARG(n) MEM32(g_esp + 4 + 4 * (n))
 static const char* gstr(uint32_t va) { return va ? (const char*)(uintptr_t)va : "(null)"; }
@@ -83,13 +88,88 @@ static void shim_CreateWindowExA(void) {
     g_esp += 4 + 12 * 4;
 }
 
-/* The game was written for an exclusive fullscreen window, whose client
- * area is the screen, and it offsets drawing into the primary by the window's
- * screen position (the Bink intro, 0x00432EF0). Headless, the primary is an
- * offscreen surface and the hidden window sits wherever Windows put it, so the
- * client-to-screen mapping is identity, as it was in fullscreen. */
+/* ---- the virtual screen ---------------------------------------------------
+ * The game was written for an exclusive fullscreen window, whose client area
+ * IS the screen: it offsets drawing into the primary by window positions (the
+ * Bink intro, 0x00432EF0; the menus' button captions). With a virtual display
+ * the game's windows sit wherever Windows, or offstage, puts them -- offstage
+ * moves every window of a program onto its monitor, and the captions then
+ * landed off the surface. So every screen coordinate the game sees is
+ * relative to its main window's client corner: that corner is the virtual
+ * screen's (0,0), as it was in fullscreen, wherever it really is. */
+static POINT vorigin(void) {
+    POINT o = { 0, 0 };
+    if (g_game_hwnd) ClientToScreen(g_game_hwnd, &o);
+    return o;
+}
+
 static void shim_ClientToScreen(void) {
-    g_eax = 1;
+    POINT* p = (POINT*)(uintptr_t)ARG(1);
+    POINT o = vorigin();
+    g_eax = (uint32_t)ClientToScreen((HWND)(uintptr_t)ARG(0), p);
+    p->x -= o.x, p->y -= o.y;
+    g_esp += 4 + 2 * 4;
+}
+
+static void shim_ScreenToClient(void) {
+    POINT* p = (POINT*)(uintptr_t)ARG(1);
+    POINT o = vorigin();
+    p->x += o.x, p->y += o.y;
+    g_eax = (uint32_t)ScreenToClient((HWND)(uintptr_t)ARG(0), p);
+    g_esp += 4 + 2 * 4;
+}
+
+static void shim_GetWindowRect(void) {
+    RECT* r = (RECT*)(uintptr_t)ARG(1);
+    POINT o = vorigin();
+    g_eax = (uint32_t)GetWindowRect((HWND)(uintptr_t)ARG(0), r);
+    OffsetRect(r, -o.x, -o.y);
+    g_esp += 4 + 2 * 4;
+}
+
+static void shim_WindowFromPoint(void) {
+    POINT o = vorigin(), p = { (LONG)ARG(0) + o.x, (LONG)ARG(1) + o.y };
+    g_eax = (uint32_t)(uintptr_t)WindowFromPoint(p);
+    g_esp += 4 + 2 * 4;
+}
+
+/* A top-level window is placed in screen coordinates, a child in its parent's
+ * client coordinates (left alone). The main window stays where it is: it
+ * defines the origin; only its size is the game's. */
+static int top_level(HWND h) { return !(GetWindowLongA(h, GWL_STYLE) & WS_CHILD); }
+
+static void shim_MoveWindow(void) {
+    HWND h = (HWND)(uintptr_t)ARG(0);
+    int x = (int)ARG(1), y = (int)ARG(2), w = (int)ARG(3), hh = (int)ARG(4);
+    if (h == g_game_hwnd) {
+        RECT r;
+        GetWindowRect(h, &r);
+        x = r.left, y = r.top;
+    } else if (top_level(h)) {
+        POINT o = vorigin();
+        x += o.x, y += o.y;
+    }
+    g_eax = (uint32_t)MoveWindow(h, x, y, w, hh, (BOOL)ARG(5));
+    g_esp += 4 + 6 * 4;
+}
+
+static void shim_SetWindowPos(void) {
+    HWND h = (HWND)(uintptr_t)ARG(0);
+    int x = (int)ARG(2), y = (int)ARG(3);
+    UINT flags = ARG(6);
+    if (!(flags & SWP_NOMOVE)) {
+        if (h == g_game_hwnd) flags |= SWP_NOMOVE;
+        else if (top_level(h)) { POINT o = vorigin(); x += o.x, y += o.y; }
+    }
+    g_eax = (uint32_t)SetWindowPos(h, (HWND)(uintptr_t)ARG(1), x, y, (int)ARG(4), (int)ARG(5), flags);
+    g_esp += 4 + 7 * 4;
+}
+
+/* The game parks or warps its cursor; only the virtual one moves. The real
+ * cursor belongs to the player (and over RDP, to a phone). */
+static void shim_SetCursorPos(void) {
+    input_live_cursor((int)ARG(0), (int)ARG(1));
+    g_eax = TRUE;
     g_esp += 4 + 2 * 4;
 }
 
@@ -416,73 +496,90 @@ static FILE* g_ffmpeg;
 static DWORD g_rec_w, g_rec_h;
 static long g_recorded;
 
+/* The recorder writes on its thread; the watchdog and --frames close on
+ * theirs. A close in the middle of a write freed the FILE under fwrite, and the
+ * CRT ended the process with 0xC0000409. */
+static CRITICAL_SECTION g_rec_lock;
+
 static void record_close(void) {
+    EnterCriticalSection(&g_rec_lock);
     if (g_ffmpeg) {
         _pclose(g_ffmpeg);
         g_ffmpeg = NULL;
         fprintf(stderr, "[record] %ld frames -> %s\n", g_recorded, g_record);
     }
+    LeaveCriticalSection(&g_rec_lock);
+}
+
+/* The game's picture: the primary, converted to 32-bit BGRX into `out`
+ * (stride *w), at most maxw x maxh. 0 when there is no primary yet. Shared by
+ * the recorder and the presenter (present.c). The copy is made under the lock
+ * and converted straight out of the locked surface: 800x600 is 2 ms. */
+int host_frame(uint32_t* out, int maxw, int maxh, int* pw, int* ph) {
+    DDSURFACEDESC d;
+    EnterCriticalSection(&g_primary_lock);
+    if (!g_primary) { LeaveCriticalSection(&g_primary_lock); return 0; }
+    memset(&d, 0, sizeof d);
+    d.dwSize = sizeof d;
+    if (g_primary->lpVtbl->Lock(g_primary, NULL, &d, DDLOCK_WAIT | DDLOCK_READONLY, NULL) != DD_OK) {
+        LeaveCriticalSection(&g_primary_lock);
+        return 0;
+    }
+    int w = (int)d.dwWidth < maxw ? (int)d.dwWidth : maxw, h = (int)d.dwHeight < maxh ? (int)d.dwHeight : maxh;
+    int bpp = (int)d.ddpfPixelFormat.dwRGBBitCount;
+    for (int y = 0; y < h; y++) {
+        const uint8_t* src = (const uint8_t*)d.lpSurface + y * d.lPitch;
+        uint32_t* row = out + y * w;
+        if (bpp == 16) {
+            for (int x = 0; x < w; x++) {
+                uint16_t p = ((const uint16_t*)src)[x];
+                uint32_t r = (p >> 11) & 31, g = (p >> 5) & 63, b = p & 31;
+                row[x] = (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
+            }
+        } else memcpy(row, src, (size_t)w * 4);
+    }
+    g_primary->lpVtbl->Unlock(g_primary, NULL);
+    LeaveCriticalSection(&g_primary_lock);
+    *pw = w;
+    *ph = h;
+    return 1;
 }
 
 static DWORD WINAPI recorder(LPVOID unused) {
-    static uint32_t row[4096];
+    static uint32_t frame[4096 * 2160], row[4096];
     DWORD next = GetTickCount();
     (void)unused;
     for (;;) {
-        DDSURFACEDESC d;
+        int w, h;
         next += 33;
         { LONG wait = (LONG)(next - GetTickCount()); if (wait > 0) Sleep(wait); }
-        EnterCriticalSection(&g_primary_lock);
-        if (!g_primary) { LeaveCriticalSection(&g_primary_lock); continue; }
-        memset(&d, 0, sizeof d);
-        d.dwSize = sizeof d;
-        if (g_primary->lpVtbl->Lock(g_primary, NULL, &d, DDLOCK_WAIT | DDLOCK_READONLY, NULL) != DD_OK) {
-            LeaveCriticalSection(&g_primary_lock);
-            continue;
-        }
+        if (!host_frame(frame, 4096, 2160, &w, &h)) continue;
+        EnterCriticalSection(&g_rec_lock);
+        if (!g_ffmpeg && g_recorded) { LeaveCriticalSection(&g_rec_lock); return 0; }   /* closed */
         if (!g_ffmpeg) {
             char cmd[MAX_PATH * 2];
             _snprintf(cmd, sizeof cmd - 1, "ffmpeg -y -loglevel error -f rawvideo -pix_fmt bgr0 "
-                      "-s %lux%lu -r 30 -i - -c:v libx264 -pix_fmt yuv420p \"%s\"",
-                      d.dwWidth, d.dwHeight, g_record);
+                      "-s %dx%d -r 30 -i - -c:v libx264 -pix_fmt yuv420p \"%s\"", w, h, g_record);
             g_ffmpeg = _popen(cmd, "wb");
-            g_rec_w = d.dwWidth < 4096 ? d.dwWidth : 4096;
-            g_rec_h = d.dwHeight < 2160 ? d.dwHeight : 2160;
-            fprintf(stderr, "[record] %lux%lu %lu bpp -> %s\n", d.dwWidth, d.dwHeight,
-                    d.ddpfPixelFormat.dwRGBBitCount, g_record);
+            g_rec_w = (DWORD)w;
+            g_rec_h = (DWORD)h;
+            fprintf(stderr, "[record] %dx%d -> %s\n", w, h, g_record);
         }
-        /* Copy out under the lock, convert and write after it: the pipe can
-         * block, and the game's own Lock of the primary waits while ours is held. */
-        {
-            static uint8_t frame[4096 * 2160 * 4];
-            DWORD w = d.dwWidth < 4096 ? d.dwWidth : 4096, h = d.dwHeight < 2160 ? d.dwHeight : 2160;
-            DWORD bpp = d.ddpfPixelFormat.dwRGBBitCount / 8, rowb = w * bpp;
-            for (DWORD y = 0; y < h; y++)
-                memcpy(frame + y * rowb, (const uint8_t*)d.lpSurface + y * d.lPitch, rowb);
-            g_primary->lpVtbl->Unlock(g_primary, NULL);
-            LeaveCriticalSection(&g_primary_lock);
-            if (g_recorded == 0 || g_recorded % 300 == 0) {
-                uint32_t sum = 0;
-                for (DWORD k = 0; k < rowb * h; k += 64) sum = sum * 31 + frame[k];
-                fprintf(stderr, "[record] frame %ld at %p checksum %08X\n", g_recorded, d.lpSurface, sum);
-            }
-            /* The recording keeps the size it started with; a later mode (the
-             * menus are 800x600, a game 640x480) is scaled to it, nearest
-             * neighbour. Written at another size, every frame after the mode
-             * change came out sheared. */
-            for (DWORD y = 0; y < g_rec_h && g_ffmpeg; y++) {
-                const uint8_t* src = frame + (y * h / g_rec_h) * rowb;
-                for (DWORD x = 0; x < g_rec_w; x++) {
-                    DWORD sx = x * w / g_rec_w;
-                    if (bpp == 2) {
-                        uint16_t p = ((const uint16_t*)src)[sx];
-                        uint32_t r = (p >> 11) & 31, g = (p >> 5) & 63, b = p & 31;
-                        row[x] = (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
-                    } else row[x] = ((const uint32_t*)src)[sx];
-                }
-                fwrite(row, 4, g_rec_w, g_ffmpeg);
-            }
+        if (g_recorded == 0 || g_recorded % 300 == 0) {
+            uint32_t sum = 0;
+            for (int k = 0; k < w * h; k += 16) sum = sum * 31 + frame[k];
+            fprintf(stderr, "[record] frame %ld checksum %08X\n", g_recorded, sum);
         }
+        /* The recording keeps the size it started with; a later mode (the
+         * menus are 800x600, a game 640x480) is scaled to it, nearest
+         * neighbour. Written at another size, every frame after the mode
+         * change came out sheared. */
+        for (DWORD y = 0; y < g_rec_h && g_ffmpeg; y++) {
+            const uint32_t* src = frame + (y * (DWORD)h / g_rec_h) * (DWORD)w;
+            for (DWORD x = 0; x < g_rec_w; x++) row[x] = src[x * (DWORD)w / g_rec_w];
+            fwrite(row, 4, g_rec_w, g_ffmpeg);
+        }
+        LeaveCriticalSection(&g_rec_lock);
         if (g_ffmpeg && ++g_recorded == g_record_frames) {
             record_close();
             fflush(stderr);
@@ -619,7 +716,12 @@ static native32_shim_t g_headless_shims[] = {
     { "GetForegroundWindow", shim_focus_query },
     { "GetFocus", shim_focus_query },
     { "ClientToScreen", shim_ClientToScreen },
-    { "ScreenToClient", shim_ClientToScreen },
+    { "ScreenToClient", shim_ScreenToClient },
+    { "GetWindowRect", shim_GetWindowRect },
+    { "WindowFromPoint", shim_WindowFromPoint },
+    { "MoveWindow", shim_MoveWindow },
+    { "SetWindowPos", shim_SetWindowPos },
+    { "SetCursorPos", shim_SetCursorPos },
     { "GetSystemMetrics", shim_GetSystemMetrics },
     { "DirectDrawCreate", shim_DirectDrawCreate },
 };
@@ -749,6 +851,10 @@ int main(int argc, char** argv) {
         if (n) { i += n - 1; continue; }
         if (!strcmp(argv[i], "--run")) run = 1;
         else if (!strcmp(argv[i], "--headless")) g_headless = 1;
+        else if (!strcmp(argv[i], "--classic")) g_classic = 1;
+        else if (!strcmp(argv[i], "--fullscreen")) g_fullscreen = 1;
+        else if (!strcmp(argv[i], "--scale") && i + 1 < argc && present_mode_from_name(argv[i + 1]) >= 0)
+            g_scale_mode = present_mode_from_name(argv[++i]);
         else if (!strcmp(argv[i], "--debuglog")) g_debuglog = 1;
         else if (!strcmp(argv[i], "--original")) g_original = 1;
         else if (!strcmp(argv[i], "--probe") && i + 1 < argc && g_nprobe < MAX_PROBES)
@@ -761,14 +867,14 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--native-trace")) native32_trace_native = 1;
         else if (!strcmp(argv[i], "--callbacks")) native32_trace_callbacks = 1;
         else {
-            printf("usage: ra2 [--run] [--headless] [--record out.mp4] [--frames N] [--exe game\\gamemd.exe] [--game game]\n"
+            printf("usage: ra2 [--run] [--headless | --classic | [--fullscreen] [--scale sharp|smooth|crt|nearest|integer]] [--record out.mp4] [--frames N] [--exe game\\gamemd.exe] [--game game]\n"
                    "           [--press DLG:CTRL@s] [--select DLG:CTRL=N@s] [--waitlog TEXT@s] [--move|--click x,y@s] [--key [c][s][a]+vk@s] [--wait VA@s]\n"
                    "           [--watchdog S] [--probe VA] [--debuglog] [--original] [--native-trace] [--callbacks]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
         }
     }
-    if (g_record && !g_headless) { fprintf(stderr, "--record needs --headless\n"); return 1; }
+    if (g_record && g_classic) { fprintf(stderr, "--record needs the virtual display (not --classic)\n"); return 1; }
     GetFullPathNameA(exe, MAX_PATH, exe_full, NULL);
     GetFullPathNameA(game, MAX_PATH, game_full, NULL);
     if (g_record) {                    /* the run chdirs into game\ */
@@ -792,9 +898,22 @@ int main(int argc, char** argv) {
     }
 
     InitializeCriticalSection(&g_primary_lock);
-    native32_shim_t* shims = g_headless ? g_headless_shims : g_shims;
-    int nshims = g_headless ? (int)(sizeof g_headless_shims / sizeof g_headless_shims[0])
-                            : (int)(sizeof g_shims / sizeof g_shims[0]);
+    InitializeCriticalSection(&g_rec_lock);
+    /* Headless and the presenter share the virtual display. The presenter
+     * keeps the game's message boxes real (a player answers them) and its
+     * single-instance mutexes as they are. */
+    native32_shim_t* shims = g_classic ? g_shims : g_headless_shims;
+    int nshims = g_classic ? (int)(sizeof g_shims / sizeof g_shims[0])
+                           : (int)(sizeof g_headless_shims / sizeof g_headless_shims[0]);
+    if (!g_classic && !g_headless) {
+        static native32_shim_t live[sizeof g_headless_shims / sizeof g_headless_shims[0]];
+        int n = 0;
+        for (int k = 0; k < nshims; k++)
+            if (strcmp(shims[k].name, "MessageBoxA") && strcmp(shims[k].name, "CreateMutexA") &&
+                strcmp(shims[k].name, "OpenMutexA"))
+                live[n++] = shims[k];
+        shims = live, nshims = n;
+    }
     if (g_original) {
         /* The shipping machine code under the same host, shims and input
          * (oracle.c): the reference a lifted run is compared against. */
@@ -803,6 +922,7 @@ int main(int argc, char** argv) {
         if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
         if (g_record) CloseHandle(CreateThread(NULL, 0, recorder, NULL, 0, NULL));
         input_start();
+        if (!g_classic && !g_headless) present_start(g_scale_mode, g_fullscreen);
         return oracle_run(exe_full, RA2_IMAGE_BASE, shims, nshims, hooks, 1);
     }
 
@@ -827,6 +947,7 @@ int main(int argc, char** argv) {
     if (g_record) CloseHandle(CreateThread(NULL, 0, recorder, NULL, 0, NULL));
     if (input_scripted() && !g_headless) { fprintf(stderr, "a scripted run needs --headless\n"); return 1; }
     input_start();
+    if (!g_classic && !g_headless) present_start(g_scale_mode, g_fullscreen);
     printf("  entering 0x%08X\n\n", ra2_entry_va);
     fflush(stdout);
     native32_call_guest(ra2_entry_va, 0, NULL);
