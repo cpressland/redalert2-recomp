@@ -53,7 +53,7 @@ static const char* g_dump;
 static int g_dumped;
 static uint8_t g_pass[4][65536];          /* the four passes */
 static uint8_t g_depth[65536];
-static uint32_t g_bbox[5], g_rect[6], *g_rect_at;
+static uint32_t g_bbox[5], g_rect[16], *g_rect_at, g_rect_len;   /* the caller's results, put back */
 uint8_t ra2_vox_hd[512 * 512];            /* the last part rendered, at 2x */
 
 /* pass k's offset: half a pixel back, so its pixels sit at +1 in the 2x grid */
@@ -114,10 +114,38 @@ static uint64_t memo_key(void) {
     return k;
 }
 
+static int hd_begin(uint32_t save, uint32_t len, int memo_ok);
+
+/* After 0x00754510: rect is the 6-dword rect it returned. */
 int ra2_vox_hd_begin(uint32_t rect) {
-    if (!ra2_vox_hd_on || g_busy) return 0;
+    return hd_begin(rect, 24, memo_rect((const uint32_t*)(uintptr_t)rect));
+}
+
+/* After 0x007542F0, which writes its results through pointers: save is the
+ * caller's region holding them; the memo's rect is the buffer's bounding
+ * box (0x00B2FB60: x, y, w, h, inclusive), which every finish stage sets. */
+static long g_anim_renders;
+
+/* Voxel animations and debris are opt-in, RA2_HD_VOXEL_ANIMS=1: the path is
+ * the same as units' and shadows', but no test yet puts one on screen. */
+static int anims_on(void) {
+    static int on = -1;
+    if (on < 0) on = getenv("RA2_HD_VOXEL_ANIMS") != NULL;
+    return on && ra2_vox_hd_on;
+}
+
+int ra2_vox_hd_begin_at(uint32_t save, uint32_t len) {
+    if (!anims_on()) return 0;
+    g_anim_renders++;
+    g_mx = (int)VOX_BBOX[0], g_my = (int)VOX_BBOX[1], g_mw = (int)VOX_BBOX[2] + 1, g_mh = (int)VOX_BBOX[3] + 1;
+    int ok = g_mx >= 0 && g_my >= 0 && g_mw > 0 && g_mh > 0 && g_mx + g_mw <= 256 && g_my + g_mh <= 256;
+    return hd_begin(save, len, ok);
+}
+
+static int hd_begin(uint32_t save, uint32_t len, int memo_ok) {
+    if (!ra2_vox_hd_on || g_busy || len > sizeof g_rect) return 0;
     g_key = 0;
-    if (memo_rect((const uint32_t*)(uintptr_t)rect)) {
+    if (memo_ok) {
         g_key = memo_key();
         for (int i = 0; i < MEMO; i++)
             if (g_memo[i].px && g_memo[i].key == g_key && g_memo[i].w == g_mw && g_memo[i].h == g_mh) {
@@ -133,8 +161,9 @@ int ra2_vox_hd_begin(uint32_t rect) {
     memcpy(g_pass[0], VOX_COLOUR, 65536);
     memcpy(g_depth, VOX_DEPTH, 65536);
     memcpy(g_bbox, VOX_BBOX, sizeof g_bbox);
-    g_rect_at = (uint32_t*)(uintptr_t)rect;
-    memcpy(g_rect, g_rect_at, sizeof g_rect);
+    g_rect_at = (uint32_t*)(uintptr_t)save;
+    g_rect_len = len;
+    memcpy(g_rect, g_rect_at, len);
     return 1;
 }
 
@@ -151,7 +180,7 @@ uint32_t ra2_vox_hd_end(void) {
     memcpy(VOX_COLOUR, g_pass[0], 65536);         /* the game's own 1x render, as it was */
     memcpy(VOX_DEPTH, g_depth, 65536);
     memcpy(VOX_BBOX, g_bbox, sizeof g_bbox);
-    memcpy(g_rect_at, g_rect, sizeof g_rect);
+    memcpy(g_rect_at, g_rect, g_rect_len);
     for (int k = 0; k < 4; k++) {
         int dx = k & 1, dy = k >> 1;
         for (int y = 0; y < 256; y++)
@@ -552,6 +581,13 @@ void ra2_vox_shadow_blitted(void) {
     g_sh_records++;
 }
 
+/* VoxelAnimClass::Draw_It's two blits: the shadow's and the body's (straight
+ * onto the battlefield), recorded like a unit's when animations are on. */
+void ra2_vox_anim_shadow_blit(uint32_t dest, uint32_t esp) { if (anims_on()) ra2_vox_shadow_blit(dest, esp); }
+void ra2_vox_anim_shadow_blitted(void) { if (anims_on()) ra2_vox_shadow_blitted(); }
+void ra2_vox_anim_blit(uint32_t dest, uint32_t convert, uint32_t esp) { if (anims_on()) ra2_vox_hd_blit(dest, convert, esp); }
+void ra2_vox_anim_blitted(void) { if (anims_on()) ra2_vox_hd_blitted(); }
+
 /* ---- 4. the frame ------------------------------------------------------------------ */
 
 /* 0x004373B0 entry: a copy into the frame surface ends the frame. */
@@ -646,10 +682,10 @@ void hdvox_compose(const uint8_t* frame16, int pitch, int w, int h, uint32_t* ou
         double n = g_published_frames > 1 ? (double)(g_published_frames - 1) : 1.0;
         fprintf(stderr, "[hdvox] %ld frames, %ld records (%ld shadows, %ld aircraft parts, %ld shadows not on the battlefield); "
                 "2x pixels shown: units %ld of %ld, shadows %ld of %ld; "
-                "%.1f ms a frame, %.2f of it the 2x renders (%ld renders, %ld from memory)\n",
+                "%.1f ms a frame, %.2f of it the 2x renders (%ld renders, %ld from memory, %ld voxel animation renders)\n",
                 g_published_frames, g_records, g_sh_records, g_direct,
                 g_sh_skipped, matched[0], offered[0], matched[1], offered[1],
                 1000.0 * g_frame_ticks / hz.QuadPart / n, 1000.0 * g_hd_ticks / hz.QuadPart / n,
-                g_memo_hits + g_memo_misses, g_memo_hits);
+                g_memo_hits + g_memo_misses, g_memo_hits, g_anim_renders);
     }
 }

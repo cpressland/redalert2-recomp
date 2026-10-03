@@ -4,7 +4,9 @@
  *   --press DLG:CTRL@s   press control CTRL of menu dialog DLG, once DLG is open
  *   --select DLG:CTRL=N@s  pick item N of a list or combo box in DLG
  *   --waitlog TEXT@s     hold until the game's debug log prints a line with TEXT
- *   --move x,y@s  --click x,y@s  --key [c][s][a]+vk@s  --wait VA@s
+ *   --move x,y@s  --click [c][s][a]+x,y@s  --key [c][s][a]+vk@s  --wait VA@s
+ *   (c, s, a: held down with it: Ctrl, Shift, Alt; Ctrl+click is force-fire)
+ *   --drag x1,y1,x2,y2@s   a band selection, button down at one corner, up at the other
  *
  * Civilization III's grammar and timing (civ3 src/runtime/input.c): s is
  * seconds after the main menu opened, events run in time order on one thread,
@@ -26,7 +28,7 @@
 #include <string.h>
 #include "input.h"
 
-typedef struct { char kind; int x, y; double t; char text[64]; } ev_t;
+typedef struct { char kind; int x, y, mods; double t; char text[64]; } ev_t;
 #define MAX_EV 256
 static ev_t g_ev[MAX_EV];
 static int g_nev;
@@ -37,8 +39,19 @@ int input_arg(int argc, char** argv, int i) {
     ev_t e = { 0 };
     const char* a = argv[i + 1];
     if (!strcmp(argv[i], "--move") || !strcmp(argv[i], "--click")) {
+        const char* plus = strchr(a, '+');
+        if (plus) {
+            for (const char* m = a; m < plus; m++)
+                e.mods |= *m == 'c' ? 1 : *m == 's' ? 2 : *m == 'a' ? 4 : 0;
+            a = plus + 1;
+        }
         if (sscanf(a, "%d,%d@%lf", &e.x, &e.y, &e.t) != 3) return 0;
         e.kind = argv[i][2];                    /* 'm' or 'c' */
+    } else if (!strcmp(argv[i], "--drag")) {
+        int x2, y2;
+        if (sscanf(a, "%d,%d,%d,%d@%lf", &e.x, &e.y, &x2, &y2, &e.t) != 5) return 0;
+        e.mods = x2 << 16 | (y2 & 0xFFFF);      /* the far corner */
+        e.kind = 'd';
     } else if (!strcmp(argv[i], "--press")) {
         if (sscanf(a, "%i:%i@%lf", &e.x, &e.y, &e.t) != 3) return 0;
         e.kind = 'p';
@@ -315,14 +328,45 @@ static DWORD WINAPI script(LPVOID unused) {
                 if (e->y & 1 << m) PostMessageA(h, WM_KEYUP, mvk[m], 0xC0000001);
             continue;
         }
+        if (e->kind == 'd') {
+            int x2 = e->mods >> 16, y2 = (int16_t)(e->mods & 0xFFFF);
+            fprintf(stderr, "[input] %.1fs drag %d,%d to %d,%d\n", e->t, e->x, e->y, x2, y2);
+            InterlockedExchange(&g_cx, e->x);
+            InterlockedExchange(&g_cy, e->y);
+            PostMessageA(h, WM_MOUSEMOVE, 0, MAKELPARAM(e->x, e->y));
+            Sleep(100);
+            InterlockedOr(&g_mods, 8);
+            PostMessageA(h, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(e->x, e->y));
+            lb_seen();
+            for (int k = 1; k <= 10; k++) {         /* across, a step a frame or so */
+                int x = e->x + (x2 - e->x) * k / 10, y = e->y + (y2 - e->y) * k / 10;
+                InterlockedExchange(&g_cx, x);
+                InterlockedExchange(&g_cy, y);
+                PostMessageA(h, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(x, y));
+                Sleep(60);
+            }
+            lb_seen();
+            PostMessageA(h, WM_LBUTTONUP, 0, MAKELPARAM(x2, y2));
+            InterlockedAnd(&g_mods, ~8);
+            lb_seen();
+            continue;
+        }
         LPARAM lp = MAKELPARAM(e->x, e->y);
-        fprintf(stderr, "[input] %.1fs %s %d,%d\n", e->t, e->kind == 'c' ? "click" : "move", e->x, e->y);
+        fprintf(stderr, "[input] %.1fs %s %s%d,%d\n", e->t, e->kind == 'c' ? "click" : "move",
+                e->mods & 1 ? "Ctrl-" : e->mods & 2 ? "Shift-" : e->mods & 4 ? "Alt-" : "", e->x, e->y);
         InterlockedExchange(&g_cx, e->x);
         InterlockedExchange(&g_cy, e->y);
         PostMessageA(h, WM_MOUSEMOVE, 0, lp);
         if (e->kind == 'c') {
+            static const int mvk[] = { VK_CONTROL, VK_SHIFT, VK_MENU };
+            for (int m = 0; m < 3; m++)
+                if (e->mods & 1 << m) PostMessageA(h, WM_KEYDOWN, mvk[m], 1);
+            InterlockedOr(&g_mods, e->mods);
             Sleep(100);
             click(h, lp);
+            InterlockedAnd(&g_mods, ~e->mods);
+            for (int m = 0; m < 3; m++)
+                if (e->mods & 1 << m) PostMessageA(h, WM_KEYUP, mvk[m], 0xC0000001);
         }
     }
     fprintf(stderr, "[input] script done\n");

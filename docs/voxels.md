@@ -149,6 +149,19 @@ The 2x frame needs twice the game's resolution to fit the presenter's
 4096x2160 frame: up to 2048x1080; above that the presenter shows the 1x
 frame.
 
-**Not yet:** voxel animations and debris (`VoxelAnimClass`, `0x00749B70`),
-the units drawn by `0x0073C5F0` (copied at `0x0073CDE9`), and a unit cut off
-at the edge of the staging surface stay 1x.
+**Voxel animations and debris** (`VoxelAnimClass::Draw_It`, `0x00749B70`)
+render a shadow and a body, each through a second finish stage,
+`0x007542F0` (`ecx` its rect, `edx`, one stack argument, `ret 4`; it plots
+with the same `0x00756590`/`0x00756860`), and blit each straight onto the
+battlefield. The extra passes call it again with the same arguments and
+put back its outputs (the caller's `esp+0x1C` to `esp+0x5C`); the memo's
+rect is the buffer's bounding box, which every finish stage sets; the blits
+are recorded like a shadow's and an aircraft's. This is opt-in,
+`RA2_HD_VOXEL_ANIMS=1`, because no test has put one on screen yet: they come
+from explosions (`0x00489280`, area damage, and `0x004690B0`, a projectile's
+detonation, create them), depending on the warhead, and neither the skirmish
+loop, the campaign openings nor `skirmish-forcefire` (tanks force-firing at
+tanks) produced one. A verified trigger is the next step.
+
+**Not yet:** the units drawn by `0x0073C5F0` (copied at `0x0073CDE9`), and
+a unit cut off at the edge of the staging surface stay 1x.

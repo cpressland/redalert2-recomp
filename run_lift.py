@@ -117,6 +117,19 @@ def _hd_passes(arg):
             '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */' % arg)
 
 
+def _hd_passes_7542f0():
+    """C for the three extra runs of 0x007542F0, the finish stage voxel
+    animations and debris use: ecx = esp+0x44 (its rect), edx = esp+0x20, one
+    stack argument esp+0x1C (it returns with ret 4). Its outputs, esp+0x1C to
+    esp+0x5C, are put back afterwards."""
+    return ('{ extern int ra2_vox_hd_begin_at(uint32_t, uint32_t); extern void ra2_vox_hd_pass(int); '
+            'extern uint32_t ra2_vox_hd_end(void); uint32_t _eax = eax; '
+            'if (ra2_vox_hd_begin_at(esp + 0x1C, 0x40)) { for (int _k = 1; _k < 4; _k++) { ra2_vox_hd_pass(_k); '
+            'ecx = esp + 0x44; edx = esp + 0x20; esp -= 4; MEM32(esp) = esp + 4 + 0x1C; '
+            'RECOMP_CALL(sub_007542F0); } ra2_vox_hd_end(); } eax = _eax; } '
+            '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */')
+
+
 HD_VOXEL_PATCHES = {
     # 0x00756590: the span record handed to the rasterizer is at esp+0x20; its
     # starts, x at +0x18 and y at +0x1A, are 8.8 fixed point.
@@ -166,6 +179,20 @@ HD_VOXEL_PATCHES = {
     0x00706C10: ('{ extern int ra2_vox_hd_on; if (ra2_vox_hd_on) { ebx = 0xFFFFFFFFu; MEM32(esp + 0x58) = ebx; } } '
                  '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
     0x00707387: _hd_passes(0x28),
+    # Voxel animations and debris (VoxelAnimClass::Draw_It, 0x00749B70): a
+    # shadow and then the body, each through 0x007542F0 and blitted onto the
+    # battlefield by 0x004AF2A0. Opt-in (RA2_HD_VOXEL_ANIMS=1): no test yet
+    # puts one on screen (docs/voxels.md).
+    0x00749CFA: _hd_passes_7542f0(),
+    0x00749D6D: ('{ extern void ra2_vox_anim_shadow_blit(uint32_t, uint32_t); ra2_vox_anim_shadow_blit(ecx, esp); } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
+    0x00749D6E: ('{ extern void ra2_vox_anim_shadow_blitted(void); ra2_vox_anim_shadow_blitted(); } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
+    0x00749DE6: _hd_passes_7542f0(),
+    0x00749EE2: ('{ extern void ra2_vox_anim_blit(uint32_t, uint32_t, uint32_t); ra2_vox_anim_blit(ecx, edx, esp); } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
+    0x00749EE4: ('{ extern void ra2_vox_anim_blitted(void); ra2_vox_anim_blitted(); } '
+                 '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),
     # ...and blits the shadow with 0x004AF2A0 (the shadow converter in edx).
     0x00707431: ('{ extern void ra2_vox_shadow_blit(uint32_t, uint32_t); ra2_vox_shadow_blit(ecx, esp); } '
                  '/* remaster: HD voxels, run_lift.py HD_VOXEL_PATCHES */'),

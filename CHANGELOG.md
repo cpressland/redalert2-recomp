@@ -6,6 +6,12 @@ versions follow [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- HD voxel animations and debris (VoxelAnimClass), opt-in with
+  `RA2_HD_VOXEL_ANIMS=1` until a test puts one on screen (docs/voxels.md).
+- Scripted input: `--drag x1,y1,x2,y2@s` (band selection) and modifier
+  clicks, `--click c+x,y@s` (Ctrl+click is force-fire); the
+  `skirmish-forcefire` case deploys the MCV, selects everything and
+  force-fires.
 - HD voxels for shadows and aircraft: a unit's shadow at 2x (solid, with a
   2x edge, where RA2's own is a 1x stipple), and voxels drawn straight onto
   the battlefield (aircraft, buildings' voxel parts). 2x images are

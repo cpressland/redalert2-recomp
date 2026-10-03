@@ -24,8 +24,10 @@ not on patches to a binary:
   bars beside the 4:3 menus, remembered settings (docs/presenter.md), and
   720p to 4K in game (docs/hires.md).
 - **HD voxels.** Done for units, their shadows and aircraft
-  (docs/voxels.md). Next: voxel animations and debris, the units drawn by
-  0x0073C5F0, and 2x above a game resolution of 2048x1080.
+  (docs/voxels.md). Voxel animations and debris are written and opt-in: next
+  is a test that puts one on screen (an explosion with debris under the
+  camera). Then the units drawn by 0x0073C5F0, and 2x above a game
+  resolution of 2048x1080.
 - **Higher-resolution art paths**, where a larger source exists or can be
   produced, behind the same asset loaders.
 - **Modern input and audio**: raw mouse, rebindable keys, DirectSound replaced

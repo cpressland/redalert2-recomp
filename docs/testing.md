@@ -26,7 +26,7 @@ py -3 tools/playtest.py skirmish-loop --original
 | `sp-*` | Single Player's New Campaign, Load Saved Game, Skirmish | the screen opened |
 | `options-*`, `movies-*` | sub-screens and the movie/credit players | the screen opened, no fault |
 | `skirmish-start` | Single Player, Skirmish, Start Game | in game: `Capture_Mouse()` logged and the picture moving |
-| `skirmish-loop` | a skirmish nobody plays, through defeat, the score screen, Continue | the main menu opens again |
+| `skirmish-loop` | a skirmish nobody plays, through defeat, the score screen, Continue | the main menu opens again; the AI usually wins in about 4.5 minutes, but now and then not within the 12, and the case fails on timing (run it again) |
 | `campaign-*` | New Campaign, then the Allied or Soviet emblem | in game, and the player not defeated |
 | `lan-new` | Network, then New: the LAN host's setup screen | the screen opened, no fault |
 
@@ -55,7 +55,8 @@ which becomes host arguments:
 | `--press DLG:CTRL@s` | wait until dialog DLG is open, then click control CTRL |
 | `--select DLG:CTRL=N@s` | pick item N of a list or combo box in DLG |
 | `--waitlog TEXT@s` | hold the script until the game's debug log prints TEXT |
-| `--key [c][s][a]+vk@s`, `--move/--click x,y@s`, `--wait VA@s` | as in civ3 |
+| `--key [c][s][a]+vk@s`, `--move x,y@s`, `--click [c][s][a]+x,y@s`, `--wait VA@s` | as in civ3; a click can hold Ctrl, Shift, Alt (Ctrl+click is force-fire) |
+| `--drag x1,y1,x2,y2@s` | a band selection: button down at one corner, across, up at the other |
 
 `s` counts seconds from when the main menu first opened (civ3: then a script
 does not depend on how long the boot took). A press and a waitlog wait for
