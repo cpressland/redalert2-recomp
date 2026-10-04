@@ -130,12 +130,38 @@ Exit 4 is the watchdog, the normal end of a timed run. The evidence is in
 is the real test: a pass says the case reached what it expected and ran clean,
 not that every pixel was right.
 
-`RA2_EXE` runs the suite on another build of the host, a clang-cl build from
-recomp-netlab's farm for instance (docs/netlab.md); every run is muted
-(`--mute`).
+`RA2_EXE` runs the suite on another build of the host, a clang-cl build for
+instance; every run is muted (`--mute`).
 
 "Ran clean" means no fault, no `[not-lifted]`, no unresolved `ITAIL` or
 `ICALL`, no message box. An unresolved indirect call returns 0 and the game
 carries on, so it fails the case: the voxel rasterizers were one, and the
 suite passed with every vehicle invisible until they were counted
 ([bringup.md](bringup.md) 12).
+
+## RA2 against RA2 over the LAN
+
+Two PCs on one subnet, each with the game, each playing a script in the
+game's own input, in the presenter window:
+
+```
+build\ra2.exe --run --mute --args tools\lan\host.args      # the PC that hosts
+build\ra2.exe --run --mute --args tools\lan\joiner.args    # the PC that joins
+```
+
+The host goes Network, New (the host's game screen, `0xBC`); the joiner goes
+Network, picks the host's game in the list, Join and Accept (`0xBD`); then
+the host's Start Game, and both reach the game (`Capture_Mouse` in the log).
+
+- **Pictures come from the game**, not the screen: the scripts write the
+  game's frame every 10 s (`--hd-voxels-dump lan-frames`). A screen capture of
+  the window picks up whatever is over it, which on a machine someone uses can
+  be their own programs.
+- **One subnet.** IPXEmu (the game folder's `wsock32.dll`) finds games by UDP
+  broadcast.
+- **Two player names**: each PC's `RA2MD.INI` `[MultiPlayer] Handle` (hex)
+  must differ.
+- The host's game is item 1 of the lobby's games list; item 0 is the lobby.
+- After the start the scripts move the cursor onto the battlefield: left on
+  a menu button it sits past the 640x480 edge, and edge-scrolling runs the
+  view into the map's black margin.

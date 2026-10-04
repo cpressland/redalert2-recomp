@@ -26,7 +26,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# RA2_EXE: another build of the host to test (netlab's build-farm/ra2.exe, an A/B slot).
+# RA2_EXE: another build of the host to test (a clang-cl build, an A/B variant).
 HOST = os.environ.get('RA2_EXE') or os.path.join(ROOT, 'build', 'ra2.exe')
 GEN = os.path.join(ROOT, 'src', 'recomp', 'gen')
 BASELINE = os.path.join(ROOT, 'conformance.json')

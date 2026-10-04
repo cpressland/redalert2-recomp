@@ -1,4 +1,4 @@
-# RA2 LAN game, the joining side (netlab scenarios/redalert2/lan.sh).
+# RA2 LAN game, the joining side: build\ra2.exe --run --mute --args tools\lan\joiner.args (docs/testing.md).
 --debuglog
 --hd-voxels-dump lan-frames   # the game's own picture every 10 s, at 2x, whatever covers its window
 --press 0xE2:1400@1      # Network: the LAN lobby (0xBB)

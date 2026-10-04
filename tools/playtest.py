@@ -41,7 +41,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# RA2_EXE: another build of the host to test (netlab's build-farm/ra2.exe, an A/B slot).
+# RA2_EXE: another build of the host to test (a clang-cl build, an A/B variant).
 HOST = os.environ.get('RA2_EXE') or os.path.join(ROOT, 'build', 'ra2.exe')
 OUT = os.path.join(ROOT, 'work', 'tests')
 DIALOGS = os.path.join(ROOT, 'work', 'dialogs.json')

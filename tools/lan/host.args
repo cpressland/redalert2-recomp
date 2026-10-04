@@ -1,4 +1,4 @@
-# RA2 LAN game, the hosting side (netlab scenarios/redalert2/lan.sh).
+# RA2 LAN game, the hosting side: build\ra2.exe --run --mute --args tools\lan\host.args (docs/testing.md).
 # Seconds count from the main menu; a press waits for its screen to be open.
 --debuglog
 --hd-voxels-dump lan-frames   # the game's own picture every 10 s, at 2x, whatever covers its window

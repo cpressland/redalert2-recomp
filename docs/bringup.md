@@ -198,14 +198,7 @@ as `";"`, and `Set_Search_Drives` with no drive asks for the disc.
 
 The lift of init was missing code. After `call sprintf` at `0x0052C438` the
 generated C went straight on to `L_0052C4C0`, and `0x0052C43D..0x0052C4BF`
-(the strcat and the rest of the loop) was not there:
-
-```c
-    RECOMP_CALL(sub_007C8EF4); /* 0x0052C438: call 0x7c8ef4 */
-    RECOMP_FLAGS_IN();
-L_0052C4C0:
-    ecx = esp + 0x740; /* 0x0052C4C0: lea ecx, [esp + 0x740] */
-```
+(the strcat and the rest of the loop) was not there.
 
 The catalog has a false entry at `0x0052C43D`, the return address of that
 call. The extent walk reads "a call followed by an entry" as a call that never

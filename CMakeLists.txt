@@ -7,7 +7,7 @@
 # =============================================================================
 cmake_minimum_required(VERSION 3.20)
 # The C runtime linked in (/MT): ra2.exe runs on a PC without the x86 Visual
-# C++ redistributable (the lab's test VM had none, and neither may a player).
+# C++ redistributable (a clean test PC had none, and neither may a player).
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 project(ra2 C)
 

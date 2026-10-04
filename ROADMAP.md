@@ -4,47 +4,33 @@
 
 In order; each is done when its check is in the suite or the docs.
 
-1. **Upstream the toolkit fixes**: pcrecomp #41, #42, #43, #44, so the repo
-   builds from pcrecomp `main` and Setup.cmd needs no integration branch.
-2. **Setup.cmd end to end** from a clean folder: copy the game, catalog,
-   lift, build, shortcut. The README's Quick start, proven.
-3. **Play, not just reach.** Done: `skirmish-build` deploys, builds a power
+Done: the toolkit fixes found here are in pcrecomp `main` (#41 to #44), and
+Setup.cmd has been run end to end from a clean folder (the ZIP download).
+
+1. **Play, not just reach.** Done: `skirmish-build` deploys, builds a power
    plant and a barracks and trains a GI, checked in the game's event log.
    Next: a mission played to its win.
    A fight that throws voxel debris under the camera comes with it, and HD
    voxel animations go on by default once it passes.
-4. **Red Alert 2 itself** (`game.exe`, same install): catalog, lift, the same
+2. **Red Alert 2 itself** (`game.exe`, same install): catalog, lift, the same
    host and patches re-found by their shapes; the suite's cases for its menus.
-5. **The rest of the menus** in the suite: the remaining Options screens,
-   Load with a save present, the LAN host's Start, WOnline as far as it goes
+3. **The rest of the menus** in the suite: the remaining Options screens,
+   Load with a save present, WOnline as far as it goes
    without servers.
-6. **Audio in `--record`**, and a native reference run (the shipping
+4. **Audio in `--record`**, and a native reference run (the shipping
    `gamemd.exe` recorded under offstage) to compare frames against.
-7. **Multiplayer**: the LAN game works on netlab (docs/netlab.md). Next: a
-   match played to an end, more than two players, and the same across the
-   NAT (the lab's router emulation).
-8. **Release**: v0.1.0, private (section 1 of the house rules decides any
-   public flip separately).
+5. **Multiplayer**: the LAN game works between two PCs (docs/testing.md).
+   Next: a match played to an end, more than two players, and the same
+   across a NAT.
+6. **Release**: v0.1.0.
 
-## Tiberian Sun and Firestorm (next repo)
+## Tiberian Sun and Firestorm
 
 Its own repo, `tiberiansun-recomp`, the way civ, civ2 and civ3 are three:
-each game's catalog, lift, patches and hooks are tied to its exe's
-addresses. What carries over without changes is the host, and that moves
-into pcrecomp first rather than being copied:
-
-1. **Upstream the generic host** into pcrecomp: headless DirectDraw (virtual
-   display, invisible windows, focus faking), the D3D11 presenter, scripted
-   input and the playtest runner. Red Alert 2 then uses it from pcrecomp.
-2. **Recon** of `Game.exe` (Tiberian Sun with Firestorm, 3.8 MB):
-   RTTI, the catalog with #44's MASM filler fix from the start, the lift.
-   92% of its classes have a namesake here (docs/RECON.md), so this repo's
-   docs (bring-up, voxels, hi-res) are its map.
-3. **Bring-up** to the main menu with the shared host, then the suite's
-   menu, skirmish and campaign cases.
-4. **The remaster**: the presenter, resolutions (check its sidebar for the same
-   kind of limit), HD voxels re-found by their shapes: the finish stage, the
-   span records, the blits.
+each game's catalog, lift, patches and hooks are tied to its exe's addresses.
+It started from this repo's host, presenter, scripted input and test tools;
+moving that shared host into pcrecomp, so both games use one copy, is still
+to do.
 
 ## The remaster
 

@@ -6,13 +6,12 @@ versions follow [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- RA2 against RA2 over the LAN on recomp-netlab: the recipe, the scenario
-  (this PC hosts, the test VM joins, both checked in the game and pictured
-  from the game's own frames), the sides' scripts in `tools/lan/`
-  (docs/netlab.md).
-- Built on the netlab farm with clang-cl (x86) and running: the C runtime
-  linked in (`/MT`, no redistributable on a test machine), and pcrecomp #47
-  for native32's bridge under clang-cl.
+- RA2 against RA2 over the LAN, scripted on both PCs (`tools/lan/`, the
+  host's and the joiner's side), checked in the game's log and pictured from
+  its own frames (docs/testing.md).
+- Builds with clang-cl (x86) as well as MSVC; the C runtime is linked in
+  (`/MT`), so `ra2.exe` runs without the Visual C++ redistributable, and
+  pcrecomp #47 fixes native32's bridge under clang-cl.
 - `--mute` (the process's audio session at zero; the playtest suite and
   conformance use it), `--args FILE`, scripts in the presenter, and
   `RA2_EXE` for testing another build.

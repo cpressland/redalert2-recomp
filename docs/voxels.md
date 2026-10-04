@@ -51,13 +51,9 @@ one in a skirmish; 5 (`0x007DFAE0`) shows up in the campaigns.
 Until the catalog fix below, every vehicle was invisible: shadows, health
 bars and selection boxes, no unit. The rasterizers are hand-written assembly
 aligned with MASM's `align 16`, which pads with `lea` no-ops and closes with
-`mov edi, edi`:
-
-```
-007df9b7  lea esp, [esp]
-007df9be  mov edi, edi        <- the catalog's function start
-007df9c0  push ebp            <- the table's entry
-```
+`mov edi, edi`: two bytes of filler at `0x007DF9BE` that the catalog took for
+the function's start, ahead of the `push ebp` at `0x007DF9C0` that the
+dispatch table names.
 
 `8B FF 55 8B EC` reads as a hot-patch prologue, so the function started two
 bytes early and `0x007DF9C0` had none: the dispatch at `0x00756843` found

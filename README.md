@@ -10,7 +10,7 @@ Built on the [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain and
 following its shared house style (layout, CLI, harness, headless mode). Tiberian
 Dawn and Red Alert have released source and are ported from it; this engine has
 none, so it is recompiled. Tiberian Sun and Firestorm, the same engine's first
-games, get a repo of their own (ROADMAP).
+games, have a repo of their own.
 
 This is not [OpenRA](https://www.openra.net/). OpenRA is a separate engine
 that loads the original assets and reimplements the rules; this project runs
@@ -41,6 +41,11 @@ for comparison.
   sharper barrels, hulls and silhouettes, and solid shadows with smooth
   edges where the original has a 1x stipple. It costs no frame time
   (docs/voxels.md). Voxel debris is opt-in until a test exercises it.
+- **LAN multiplayer**: RA2 against RA2 between two PCs, as shipped (IPXEmu),
+  with a script for each side to play a match start unattended
+  (docs/testing.md).
+- **Runs anywhere Windows does**: the C runtime is linked in, so no Visual
+  C++ redistributable to install; `--mute` for silent runs.
 
 ## Status: **v0.1.0-dev, playable.** The whole game lifts with 0 errors and plays: every main-menu screen, skirmishes from setup to the score screen, and both campaigns, in the presenter or headless, checked by a scripted test suite.
 
@@ -56,7 +61,8 @@ for comparison.
 | HD vehicles | units, their shadows and aircraft at 2x, from four half-pixel-offset renders of each model, remembered by their 1x pixels; no change in frame time; voxel debris opt-in ([voxels.md](docs/voxels.md)) |
 | High resolution / widescreen | 720p, 1080p, 1440p and 4K in game, skirmish and campaign, picked from the presenter's settings menu (F10) or `RA2MD.INI`; 4K needed a fix to RA2's own sidebar ([hires.md](docs/hires.md)) |
 | Headless mode | `--headless --record out.mp4 --frames N`: hidden window, no mode change, the primary surface recorded to ffmpeg ([host.md](docs/host.md)) |
-| Multiplayer | RA2 against RA2 over the LAN, this PC hosting and the lab's test VM joining, scripted end to end on [recomp-netlab](https://github.com/sp00nznet/recomp-netlab), which also builds it (clang-cl, x86) ([netlab.md](docs/netlab.md)) |
+| Multiplayer | RA2 against RA2 over the LAN between two PCs, scripted on both sides into the game ([testing.md](docs/testing.md)) |
+| Compilers | MSVC (x86); clang-cl (x86) with pcrecomp #47 |
 | Conformance harness | `tools/conformance.py`: **8/8** boot milestones up to the main menu, lift 0 errors, against `conformance.json`; fails on regression |
 
 [bringup.md](docs/bringup.md) is the log of each wall and its fix. Five of them
@@ -119,9 +125,8 @@ asks for the folder, copies it into `game\`, builds the function catalog,
 lifts and builds. A rerun skips finished steps. If it stops, it says why in one
 sentence; the details are in `setup.log`.
 
-Setup.cmd runs exactly the commands in *Step by step*; it has not yet been
-run end to end from a clean folder (ROADMAP), so if it stops, Step by step is
-the tested route.
+Setup.cmd runs exactly the commands in *Step by step*, and has been run end
+to end from a clean folder (the ZIP download).
 
 It ends with `Red Alert 2 (recomp).cmd` in this folder: double-click it to
 play. F10 opens the settings.
@@ -190,13 +195,13 @@ py -3 tools\playtest.py --jobs 3                 # every menu and game mode, scr
 py -3 tools\playtest.py campaign-allied --original   # the same script on the shipping code
 ```
 
-Scripted input (headless only): `--press DLG:CTRL@s` presses a menu button by
+Scripted input (headless or in the presenter): `--press DLG:CTRL@s` presses a menu button by
 dialog and control ID once that screen is open, `--select DLG:CTRL=N@s`,
 `--waitlog TEXT@s`, `--key`, `--move`, `--click` (with Ctrl, Shift or Alt held:
 `--click c+x,y@s` is force-fire), `--drag x1,y1,x2,y2@s` (band selection),
 `--wait`. `--original` runs the shipping machine code under the same host.
 
-`--mute` keeps a run silent (the playtest suite and the lab's runs use it);
+`--mute` keeps a run silent (the playtest suite and the conformance harness use it);
 `--args FILE` reads more arguments from a file (a script of presses, as the
 LAN game's sides use: `tools\lan\*.args`). A script runs headless or in the
 presenter, not with `--classic`.
@@ -219,7 +224,10 @@ lifter and the runtime must come from the same tree.
 
 It builds from pcrecomp `main`: the four toolkit fixes found here (#41
 mid-body fall-through, #42 lifted loops yield the machine, #43 push/jmp
-inside a body, #44 MASM alignment fillers in the catalog) are merged.
+inside a body, #44 MASM alignment fillers in the catalog) are merged. A
+clang-cl build also needs #47 (native32's bridge under clang-cl).
+
+Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
@@ -229,8 +237,7 @@ inside a body, #44 MASM alignment fillers in the catalog) are merged.
 - [docs/hires.md](docs/hires.md): high resolution and widescreen, and the 4K sidebar fix
 - [docs/voxels.md](docs/voxels.md): the voxel renderer, mapped, and HD voxels
 - [docs/bringup.md](docs/bringup.md): every wall so far and its fix
-- [docs/testing.md](docs/testing.md): the playtest suite, scripted input and the `--original` oracle
-- [docs/netlab.md](docs/netlab.md): building on recomp-netlab, A/B, and the LAN game
+- [docs/testing.md](docs/testing.md): the playtest suite, scripted input, the `--original` oracle and the LAN game
 - [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md)
 
 ## License
