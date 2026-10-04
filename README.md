@@ -16,7 +16,33 @@ This is not [OpenRA](https://www.openra.net/). OpenRA is a separate engine
 that loads the original assets and reimplements the rules; this project runs
 Westwood's own code, recompiled.
 
-## Status: **v0.1.0-dev, bring-up.** The whole game lifts with 0 errors, and the recompiled game plays: every main-menu screen, skirmishes from setup to the score screen, and both campaigns into their first mission, driven headless by a scripted test suite.
+## What the remaster adds
+
+Everything here is built around the game's own code, recompiled; `--classic`
+gives the original display, and `--original` runs the shipping machine code
+for comparison.
+
+- **Its own window.** The game draws into a Direct3D 11 presenter instead of
+  taking over the screen: a resizable window or borderless fullscreen (F11,
+  Alt+Enter), sharp at any size and crisp on high-DPI screens.
+- **Scaling** (F12): sharp-bilinear (the default: whole pixels stay crisp
+  and only their edges blend), smooth, CRT, nearest, or whole multiples only.
+- **A settings menu** (F10, or right-click beside the picture): scaling,
+  fullscreen, HD vehicles, the bars beside the 4:3 menus, and the game's
+  resolution, without editing an INI. The presenter remembers its settings
+  and the window's place in `build\ra2.ini`.
+- **High resolution and widescreen**: 1280x720 up to 3840x2160 in game, more
+  of the battlefield on screen. 4K needed a fix to RA2's own sidebar, which
+  overran its button array (docs/hires.md).
+- **Framed menus**: the 800x600 menus in a widescreen window sit on a soft,
+  dark blur of themselves instead of black bars (or black, if you prefer).
+- **HD vehicles**: units, their shadows and aircraft are drawn at twice the
+  resolution of the rest of the picture, from the game's own voxel models:
+  sharper barrels, hulls and silhouettes, and solid shadows with smooth
+  edges where the original has a 1x stipple. It costs no frame time
+  (docs/voxels.md). Voxel debris is opt-in until a test exercises it.
+
+## Status: **v0.1.0-dev, playable.** The whole game lifts with 0 errors and plays: every main-menu screen, skirmishes from setup to the score screen, and both campaigns, in the presenter or headless, checked by a scripted test suite.
 
 | Stage | State |
 |---|---|
@@ -25,16 +51,18 @@ Westwood's own code, recompiled.
 | Function catalog (`disasm32`) | 24,940 functions, 91.8% of `.text`, 15 minutes |
 | Lift (`run_lift.py --all`) | 24,954 functions, 5.8M lines of C, **0 lift errors** |
 | Host (`build/ra2.exe`, 32-bit, pcrecomp `native32`) | plays: the intro, every menu, skirmishes and both campaigns, 720p to 4K, in its own Direct3D 11 presenter or headless ([bringup.md](docs/bringup.md), [presenter.md](docs/presenter.md)) |
-| Playtest suite (`tools/playtest.py`) | **29 of 29 passing**: every menu screen, every way back, a skirmish start to score screen, the Allied and Soviet campaigns, 720p to 4K: scripted by button name, run in parallel, and `--original` runs the same script on the shipping code to tell lift bugs from host bugs ([testing.md](docs/testing.md)) |
-| Presenter (the default display) | the game in its own Direct3D 11 window: sharp-bilinear, smooth, CRT, nearest or integer scaling (F12), borderless fullscreen (F11), native resolution on high-DPI screens; `--classic` is the original DirectDraw ([presenter.md](docs/presenter.md)) |
-| HD vehicles | Voxel units, their shadows and aircraft drawn at 2x in the presenter, from four half-pixel-offset renders of each model, remembered by their 1x pixels; no change in frame time ([voxels.md](docs/voxels.md)) |
+| Playtest suite (`tools/playtest.py`) | **29 of 29 passing**, with HD vehicles off and on: every menu screen, every way back, a skirmish start to score screen, orders by mouse (select, deploy, force-fire), the Allied and Soviet campaigns, 720p to 4K: scripted by button name, run in parallel, and `--original` runs the same script on the shipping code to tell lift bugs from host bugs ([testing.md](docs/testing.md)) |
+| Presenter (the default display) | the game in its own Direct3D 11 window: five scalings (F12), borderless fullscreen (F11), the settings menu (F10), blurred bars, settings remembered; `--classic` is the original DirectDraw ([presenter.md](docs/presenter.md)) |
+| HD vehicles | units, their shadows and aircraft at 2x, from four half-pixel-offset renders of each model, remembered by their 1x pixels; no change in frame time; voxel debris opt-in ([voxels.md](docs/voxels.md)) |
 | High resolution / widescreen | 720p, 1080p, 1440p and 4K in game, skirmish and campaign, picked from the presenter's settings menu (F10) or `RA2MD.INI`; 4K needed a fix to RA2's own sidebar ([hires.md](docs/hires.md)) |
 | Headless mode | `--headless --record out.mp4 --frames N`: hidden window, no mode change, the primary surface recorded to ffmpeg ([host.md](docs/host.md)) |
 | Conformance harness | `tools/conformance.py`: **8/8** boot milestones up to the main menu, lift 0 errors, against `conformance.json`; fails on regression |
 
-[bringup.md](docs/bringup.md) is the log of each wall and its fix. One of them
-was a toolkit bug (catalog entries in alignment padding hid 66 functions), fixed
-in pcrecomp rather than here.
+[bringup.md](docs/bringup.md) is the log of each wall and its fix. Five of them
+were toolkit bugs, fixed in pcrecomp rather than here: catalog entries in
+alignment padding (66 functions hidden), MASM's alignment fillers (every
+vehicle invisible), a mid-body fall-through, loops that never let the sound
+thread run, and a `push; jmp` read as a call.
 
 ## Screenshots
 
@@ -45,13 +73,23 @@ own primary surface.
 
 ![Main menu](docs/screenshots/main-menu.png)
 
+HD vehicles, 1x on the left and 2x on the right (zoomed): Grizzly tanks and the
+MCV, a Night Hawk and a destroyer, and a unit's shadow.
+
+![HD vehicles](docs/screenshots/hd-voxels.png)
+
+| | |
+|---|---|
+| ![HD aircraft and ships](docs/screenshots/hd-aircraft.png) | ![HD shadows](docs/screenshots/hd-shadows.png) |
+
 In game, from the playtest suite: the Allied campaign's first mission, the
-Soviet one, a skirmish, its setup screen and the score screen at the end.
+Soviet one, a skirmish with its MCV and Grizzlies, its setup screen and the
+score screen at the end.
 
 | | |
 |---|---|
 | ![Allied campaign](docs/screenshots/campaign-allied.png) | ![Soviet campaign](docs/screenshots/campaign-soviet.png) |
-| ![Skirmish](docs/screenshots/skirmish.png) | ![Skirmish setup](docs/screenshots/skirmish-setup.png) |
+| ![Skirmish](docs/screenshots/skirmish-units.png) | ![Skirmish setup](docs/screenshots/skirmish-setup.png) |
 | ![Skirmish score](docs/screenshots/skirmish-score.png) | |
 
 | | | |
@@ -84,10 +122,8 @@ Setup.cmd runs exactly the commands in *Step by step*; it has not yet been
 run end to end from a clean folder (ROADMAP), so if it stops, Step by step is
 the tested route.
 
-It ends with `Red Alert 2 (recomp).cmd` in this folder, which runs the
-recompiled game headless for five minutes and records `boot.mp4`: the intro,
-then the main menu. There is no input yet, so that is a bring-up run, not
-something to play.
+It ends with `Red Alert 2 (recomp).cmd` in this folder: double-click it to
+play. F10 opens the settings.
 
 ### Step by step
 
@@ -125,14 +161,14 @@ some-folder\
    ```
    py -3 run_lift.py --all
    ```
-   Expected: `lifted 23458   not-lifted stubs 0   errors 0`.
+   Expected: `lifted 24954   not-lifted stubs 0   errors 0`.
 6. Build (from a plain terminal; `build.cmd` sets up the x86 compiler itself):
    ```
    build.cmd
    ```
-7. Run it headless:
+7. Play:
    ```
-   build\ra2.exe --headless --run --watchdog 60
+   build\ra2.exe --run
    ```
 
 The usual trip-ups: `python` opening the Microsoft Store (that is Windows' alias;
@@ -147,6 +183,7 @@ build\ra2.exe --run --fullscreen --scale crt     # borderless fullscreen, CRT lo
 build\ra2.exe --run --classic                   # the original exclusive-fullscreen DirectDraw
 build\ra2.exe --headless --run --watchdog 60    # no window, no mode change, stop after 60 s
 build\ra2.exe --headless --run --record out.mp4 --frames 300
+build\ra2.exe --headless --run --hd-voxels-dump hd    # HD vehicles headless: 1x/2x renders and 2x frames into hd\
 py -3 tools\conformance.py                      # boot milestones + lift health vs the baseline
 py -3 tools\playtest.py --jobs 3                 # every menu and game mode, scripted (docs\testing.md)
 py -3 tools\playtest.py campaign-allied --original   # the same script on the shipping code
@@ -154,8 +191,13 @@ py -3 tools\playtest.py campaign-allied --original   # the same script on the sh
 
 Scripted input (headless only): `--press DLG:CTRL@s` presses a menu button by
 dialog and control ID once that screen is open, `--select DLG:CTRL=N@s`,
-`--waitlog TEXT@s`, `--key`, `--move`, `--click`, `--wait`. `--original` runs
-the shipping machine code under the same host.
+`--waitlog TEXT@s`, `--key`, `--move`, `--click` (with Ctrl, Shift or Alt held:
+`--click c+x,y@s` is force-fire), `--drag x1,y1,x2,y2@s` (band selection),
+`--wait`. `--original` runs the shipping machine code under the same host.
+
+Environment: `RA2_HOST_ARGS` (extra host flags for every playtest case),
+`RA2_FRAME_STATS=1` (time between frames), `RA2_HD_VOXEL_ANIMS=1` (HD voxel
+debris, opt-in).
 
 Diagnostics: `--debuglog` (the game's own debug log), `--native-trace`
 (every call into Windows), `--callbacks`,
@@ -168,11 +210,9 @@ Steps 5 and 6 above. `PCRECOMP` (environment, for `run_lift.py`) and
 `-DPCRECOMP=` (CMake) point at a toolkit checkout other than `..\tools`; the
 lifter and the runtime must come from the same tree.
 
-The lift needs four pcrecomp fixes found here and not yet merged: #41
-(mid-body fall-through), #42 (lifted loops yield the machine), #43
-(push/jmp inside a body) and #44 (MASM align fillers in the catalog; without
-it every vehicle is invisible). Until they are, catalog and lift from a
-checkout with all four merged into `main`.
+It builds from pcrecomp `main`: the four toolkit fixes found here (#41
+mid-body fall-through, #42 lifted loops yield the machine, #43 push/jmp
+inside a body, #44 MASM alignment fillers in the catalog) are merged.
 
 ## Documentation
 
