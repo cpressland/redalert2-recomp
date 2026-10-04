@@ -56,6 +56,7 @@ for comparison.
 | HD vehicles | units, their shadows and aircraft at 2x, from four half-pixel-offset renders of each model, remembered by their 1x pixels; no change in frame time; voxel debris opt-in ([voxels.md](docs/voxels.md)) |
 | High resolution / widescreen | 720p, 1080p, 1440p and 4K in game, skirmish and campaign, picked from the presenter's settings menu (F10) or `RA2MD.INI`; 4K needed a fix to RA2's own sidebar ([hires.md](docs/hires.md)) |
 | Headless mode | `--headless --record out.mp4 --frames N`: hidden window, no mode change, the primary surface recorded to ffmpeg ([host.md](docs/host.md)) |
+| Multiplayer | RA2 against RA2 over the LAN, this PC hosting and the lab's test VM joining, scripted end to end on [recomp-netlab](https://github.com/sp00nznet/recomp-netlab), which also builds it (clang-cl, x86) ([netlab.md](docs/netlab.md)) |
 | Conformance harness | `tools/conformance.py`: **8/8** boot milestones up to the main menu, lift 0 errors, against `conformance.json`; fails on regression |
 
 [bringup.md](docs/bringup.md) is the log of each wall and its fix. Five of them
@@ -195,7 +196,13 @@ dialog and control ID once that screen is open, `--select DLG:CTRL=N@s`,
 `--click c+x,y@s` is force-fire), `--drag x1,y1,x2,y2@s` (band selection),
 `--wait`. `--original` runs the shipping machine code under the same host.
 
-Environment: `RA2_HOST_ARGS` (extra host flags for every playtest case),
+`--mute` keeps a run silent (the playtest suite and the lab's runs use it);
+`--args FILE` reads more arguments from a file (a script of presses, as the
+LAN game's sides use: `tools\lan\*.args`). A script runs headless or in the
+presenter, not with `--classic`.
+
+Environment: `RA2_EXE` (another build to test: the playtest runner and the
+conformance harness use it in place of `build\ra2.exe`), `RA2_HOST_ARGS` (extra host flags for every playtest case),
 `RA2_FRAME_STATS=1` (time between frames), `RA2_HD_VOXEL_ANIMS=1` (HD voxel
 debris, opt-in).
 
@@ -223,6 +230,7 @@ inside a body, #44 MASM alignment fillers in the catalog) are merged.
 - [docs/voxels.md](docs/voxels.md): the voxel renderer, mapped, and HD voxels
 - [docs/bringup.md](docs/bringup.md): every wall so far and its fix
 - [docs/testing.md](docs/testing.md): the playtest suite, scripted input and the `--original` oracle
+- [docs/netlab.md](docs/netlab.md): building on recomp-netlab, A/B, and the LAN game
 - [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md)
 
 ## License

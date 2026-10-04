@@ -20,7 +20,10 @@ In order; each is done when its check is in the suite or the docs.
    without servers.
 6. **Audio in `--record`**, and a native reference run (the shipping
    `gamemd.exe` recorded under offstage) to compare frames against.
-7. **Release**: v0.1.0, private (section 1 of the house rules decides any
+7. **Multiplayer**: the LAN game works on netlab (docs/netlab.md). Next: a
+   match played to an end, more than two players, and the same across the
+   NAT (the lab's router emulation).
+8. **Release**: v0.1.0, private (section 1 of the house rules decides any
    public flip separately).
 
 ## Tiberian Sun and Firestorm (next repo)

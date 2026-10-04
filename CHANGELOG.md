@@ -6,6 +6,16 @@ versions follow [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- RA2 against RA2 over the LAN on recomp-netlab: the recipe, the scenario
+  (this PC hosts, the test VM joins, both checked in the game and pictured
+  from the game's own frames), the sides' scripts in `tools/lan/`
+  (docs/netlab.md).
+- Built on the netlab farm with clang-cl (x86) and running: the C runtime
+  linked in (`/MT`, no redistributable on a test machine), and pcrecomp #47
+  for native32's bridge under clang-cl.
+- `--mute` (the process's audio session at zero; the playtest suite and
+  conformance use it), `--args FILE`, scripts in the presenter, and
+  `RA2_EXE` for testing another build.
 - `skirmish-build`: deploy, build a power plant and a barracks, train a GI,
   by mouse, checked in the game's event log; `log=` expectations in the
   playtest runner. A `--waitlog` also sees a line printed since the previous
@@ -86,6 +96,8 @@ a2.ini`.
   script, to tell lift bugs from host bugs.
 
 ### Fixed
+- A clean exit lost the last 4 KB of the log once the C runtime was linked in
+  (`/MT`: ExitProcess flushes nothing); stderr is unbuffered.
 - Every vehicle was invisible: the voxel rasterizers' table entries had no
   function, because MASM's alignment fillers before them read as a hot-patch
   prologue (pcrecomp #44). The playtest suite now fails a run on an

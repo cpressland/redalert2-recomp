@@ -1,5 +1,6 @@
-# Build output
+# Build output (build-farm*: recomp-netlab's, docs/netlab.md)
 build/
+build-farm*/
 out/
 cmake-build-*/
 *.obj
@@ -50,3 +51,6 @@ Desktop.ini
 # Made by Setup.cmd
 Red Alert 2 (recomp).cmd
 build-trace/
+
+# LAN game frames (tools/lan/*.args)
+lan-frames/

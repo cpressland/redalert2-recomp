@@ -1,0 +1,9 @@
+# RA2 LAN game, the joining side (netlab scenarios/redalert2/lan.sh).
+--debuglog
+--hd-voxels-dump lan-frames   # the game's own picture every 10 s, at 2x, whatever covers its window
+--press 0xE2:1400@1      # Network: the LAN lobby (0xBB)
+--select 0xBB:1353=1@25  # the host's game (item 0 is the lobby itself)
+--press 0xBB:1741@27     # Join (0xBD, the joiner's screen)
+--press 0xBD:1439@31     # Accept
+--waitlog Capture_Mouse@32
+--move 236,240@33      # the cursor onto the battlefield (see host.args)

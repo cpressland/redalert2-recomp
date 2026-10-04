@@ -6,6 +6,9 @@
 #   build\ra2.exe --run --watchdog 60
 # =============================================================================
 cmake_minimum_required(VERSION 3.20)
+# The C runtime linked in (/MT): ra2.exe runs on a PC without the x86 Visual
+# C++ redistributable (the lab's test VM had none, and neither may a player).
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 project(ra2 C)
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
@@ -49,7 +52,7 @@ target_link_options(ra2 PRIVATE /BASE:0x60000000 /FIXED:NO /DYNAMICBASE:NO
 set(GEN_OPT "/O2" CACHE STRING "optimisation for the generated C")
 set_source_files_properties(${GEN_SOURCES} PROPERTIES COMPILE_OPTIONS "/w;${GEN_OPT}")
 set_source_files_properties(src/runtime/host.c src/runtime/input.c src/runtime/oracle.c src/runtime/present.c src/runtime/hdvox.c PROPERTIES COMPILE_OPTIONS "/W3")
-target_link_libraries(ra2 PRIVATE user32 gdi32 kernel32 ole32 uuid ddraw dxguid d3d11 dxgi)
+target_link_libraries(ra2 PRIVATE user32 gdi32 kernel32 ole32 uuid ddraw dxguid winmm d3d11 dxgi)
 
 option(RA2_TRACE "record a ring buffer of lifted function entries" OFF)
 if(RA2_TRACE)

@@ -41,7 +41,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HOST = os.path.join(ROOT, 'build', 'ra2.exe')
+# RA2_EXE: another build of the host to test (netlab's build-farm/ra2.exe, an A/B slot).
+HOST = os.environ.get('RA2_EXE') or os.path.join(ROOT, 'build', 'ra2.exe')
 OUT = os.path.join(ROOT, 'work', 'tests')
 DIALOGS = os.path.join(ROOT, 'work', 'dialogs.json')
 
@@ -311,7 +312,7 @@ def run(name, args, seconds, expect, every, original=False):
     os.makedirs(d, exist_ok=True)
     game = farm(os.path.join(d, 'game'), expect.get('ini'))
     mp4, log = os.path.join(d, 'run.mp4'), os.path.join(d, 'run.log')
-    cmd = [HOST, '--headless', '--run', '--debuglog', '--watchdog', str(seconds),
+    cmd = [HOST, '--headless', '--run', '--mute', '--debuglog', '--watchdog', str(seconds),
            '--record', mp4, '--exe', os.path.join(game, 'gamemd.exe'), '--game', game] + args
     cmd += os.environ.get('RA2_HOST_ARGS', '').replace('{case}', d).split()  # extra host flags; {case} is the case's folder
     if original:

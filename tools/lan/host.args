@@ -1,0 +1,10 @@
+# RA2 LAN game, the hosting side (netlab scenarios/redalert2/lan.sh).
+# Seconds count from the main menu; a press waits for its screen to be open.
+--debuglog
+--hd-voxels-dump lan-frames   # the game's own picture every 10 s, at 2x, whatever covers its window
+--press 0xE2:1400@1      # Network: the LAN lobby (0xBB)
+--press 0xBB:1740@4      # New: host a game (0xBC, the host screen)
+--press 0xBC:1416@140    # Start Game, once the joiner has accepted
+--waitlog Capture_Mouse@141
+--move 236,240@142     # the cursor onto the battlefield: left on Start it sits past
+                       # the 640x480 edge, and edge-scrolling runs the view off the map

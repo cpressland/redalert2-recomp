@@ -11,6 +11,7 @@
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <mmsystem.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -794,6 +795,18 @@ static native32_shim_t g_headless_shims[] = {
  * (a cdecl va_list on x86 is a pointer to the first variadic slot). */
 static int g_debuglog;
 
+/* --mute: this process's audio session at zero (Vista and later: waveOut's
+ * volume is the session's, and DirectSound and Bink play in the same
+ * session). Held every second, since the game opens its devices later. For
+ * test runs on a machine someone is using. */
+static DWORD WINAPI mute_thread(LPVOID unused) {
+    (void)unused;
+    for (;;) {
+        waveOutSetVolume(NULL, 0);
+        Sleep(1000);
+    }
+}
+
 void ra2_hook_004068E0(void) {
     if (g_debuglog || input_wants_log()) {
         char buf[1024];
@@ -906,6 +919,36 @@ int main(int argc, char** argv) {
     const char* game = "game";
     char exe_full[MAX_PATH], game_full[MAX_PATH];
     int run = 0;
+    /* stderr unbuffered: the log is the evidence, and the game leaves through
+     * ExitProcess, which flushes nothing with the C runtime linked in (/MT):
+     * a run that exited cleanly lost its last 4 KB, menus and all. */
+    setvbuf(stderr, NULL, _IONBF, 0);
+    /* --args FILE: more arguments, whitespace-separated, # to the end of a
+     * line is a comment. A script that is a list of presses, for a caller
+     * that can pass only one word (netlab's role settings). */
+    for (int i = 1; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "--args")) continue;
+        static char text[16384];
+        static char* av[512];
+        FILE* f = fopen(argv[i + 1], "rb");
+        size_t n = f ? fread(text, 1, sizeof text - 1, f) : 0;
+        int ac = 0;
+        if (f) fclose(f);
+        if (!f) { fprintf(stderr, "cannot read --args %s\n", argv[i + 1]); return 1; }
+        text[n] = 0;
+        for (int k = 0; k < argc && ac < 500; k++)
+            if (k != i && k != i + 1) av[ac++] = argv[k];
+        for (char* p = text; *p && ac < 511;) {
+            while (*p && strchr(" \t\r\n", *p)) p++;
+            if (*p == '#') { while (*p && *p != '\n') p++; continue; }
+            if (!*p) break;
+            av[ac++] = p;
+            while (*p && !strchr(" \t\r\n", *p)) p++;
+            if (*p) *p++ = 0;
+        }
+        argc = ac, argv = av;
+        break;
+    }
     for (int i = 1; i < argc; i++) {
         int n = recomp_trace_arg(argc, argv, i);
         if (!n) n = input_arg(argc, argv, i);
@@ -918,6 +961,7 @@ int main(int argc, char** argv) {
             g_scale_mode = present_mode_from_name(argv[++i]);
         else if (!strcmp(argv[i], "--debuglog")) g_debuglog = 1;
         else if (!strcmp(argv[i], "--hd-voxels")) hdvox_configure(1, NULL);
+        else if (!strcmp(argv[i], "--mute")) CloseHandle(CreateThread(NULL, 0, mute_thread, NULL, 0, NULL));
         else if (!strcmp(argv[i], "--hd-voxels-dump") && i + 1 < argc) {
             static char dir[MAX_PATH];
             GetFullPathNameA(argv[++i], MAX_PATH, dir, NULL);   /* the run chdirs into game/ */
@@ -938,7 +982,7 @@ int main(int argc, char** argv) {
             printf("usage: ra2 [--run] [--headless | --classic | [--fullscreen] [--scale sharp|smooth|crt|nearest|integer]] [--record out.mp4] [--frames N] [--exe game\\gamemd.exe] [--game game]\n"
                    "           [--press DLG:CTRL@s] [--select DLG:CTRL=N@s] [--waitlog TEXT@s] [--move|--click x,y@s] [--key [c][s][a]+vk@s] [--wait VA@s]\n"
                    "           [--watchdog S] [--probe VA] [--debuglog] [--original] [--native-trace] [--callbacks]\n"
-                   "           [--hd-voxels] [--hd-voxels-dump DIR]\n");
+                   "           [--hd-voxels] [--hd-voxels-dump DIR] [--mute] [--args FILE]\n");
             recomp_trace_help();
             return argv[i][1] == 'h' || argv[i][2] == 'h' ? 0 : 1;
         }
@@ -1015,7 +1059,11 @@ int main(int argc, char** argv) {
     if (!SetCurrentDirectoryA(game_full)) { fprintf(stderr, "cannot enter %s\n", game_full); return 1; }
     if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
     if (g_record) CloseHandle(CreateThread(NULL, 0, recorder, NULL, 0, NULL));
-    if (input_scripted() && !g_headless) { fprintf(stderr, "a scripted run needs --headless\n"); return 1; }
+    /* A script drives the virtual display, headless or in the presenter (the
+     * lab's LAN games: a window to snap, a script to play); the script's
+     * keys and buttons win over the live ones. Not --classic: that is a real
+     * screen and a real mouse. */
+    if (input_scripted() && g_classic) { fprintf(stderr, "a scripted run cannot use --classic\n"); return 1; }
     input_start();
     if (!g_classic && !g_headless) present_start(g_scale_mode, g_fullscreen);
     if (g_hd_frames_dir) CloseHandle(CreateThread(NULL, 0, hd_frame_dumper, NULL, 0, NULL));

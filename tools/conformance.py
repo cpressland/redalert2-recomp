@@ -26,7 +26,8 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HOST = os.path.join(ROOT, 'build', 'ra2.exe')
+# RA2_EXE: another build of the host to test (netlab's build-farm/ra2.exe, an A/B slot).
+HOST = os.environ.get('RA2_EXE') or os.path.join(ROOT, 'build', 'ra2.exe')
 GEN = os.path.join(ROOT, 'src', 'recomp', 'gen')
 BASELINE = os.path.join(ROOT, 'conformance.json')
 
@@ -51,7 +52,7 @@ def distinct_frames(out):
 
 def boot(seconds):
     try:
-        p = subprocess.run([HOST, '--headless', '--run', '--debuglog', '--watchdog', str(seconds),
+        p = subprocess.run([HOST, '--headless', '--run', '--mute', '--debuglog', '--watchdog', str(seconds),
                             '--record', os.path.join(ROOT, 'work', 'conformance.mp4')],
                            cwd=ROOT, capture_output=True, text=True, errors='replace',
                            timeout=seconds + 60)
