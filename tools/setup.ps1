@@ -104,13 +104,14 @@ $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer
 $vs = if (Test-Path $vswhere) { (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath) } else { $null }
 if (-not $vs) { Fail "Visual Studio 2022 (or its Build Tools) with 'Desktop development with C++' is needed. Install it, then run Setup.cmd again." }
 Say "  Visual Studio: $vs"
-foreach ($t in @(@('cmake', 'Kitware.CMake', '30 MB'), @('ninja', 'Ninja-build.Ninja', '1 MB'))) {
-  if (Get-Command $t[0] -ErrorAction SilentlyContinue) { continue }
-  Say "  $($t[0]) is not installed."
-  if (-not (Ask "  Install $($t[0]) now (winget, about $($t[2]))?")) { Fail "$($t[0]) is required." }
-  Exec @('winget', 'install', '-e', '--id', $t[1], '--accept-package-agreements', '--accept-source-agreements') | Out-Null
+# $tool, not $t: PowerShell names are case-insensitive, and $T is the toolkit path.
+foreach ($tool in @(@('cmake', 'Kitware.CMake', '30 MB'), @('ninja', 'Ninja-build.Ninja', '1 MB'))) {
+  if (Get-Command $tool[0] -ErrorAction SilentlyContinue) { continue }
+  Say "  $($tool[0]) is not installed."
+  if (-not (Ask "  Install $($tool[0]) now (winget, about $($tool[2]))?")) { Fail "$($tool[0]) is required." }
+  Exec @('winget', 'install', '-e', '--id', $tool[1], '--accept-package-agreements', '--accept-source-agreements') | Out-Null
   Refresh-Path
-  if (-not (Get-Command $t[0] -ErrorAction SilentlyContinue)) { Fail "$($t[0]) installed, but Windows has not picked it up yet: close this window and run Setup.cmd again." }
+  if (-not (Get-Command $tool[0] -ErrorAction SilentlyContinue)) { Fail "$($tool[0]) installed, but Windows has not picked it up yet: close this window and run Setup.cmd again." }
 }
 
 # ---------------------------------------------------------------- the game
