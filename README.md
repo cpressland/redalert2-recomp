@@ -7,9 +7,10 @@ got and this engine never did: higher resolutions, proper scaling and a modern
 presentation layer, built on the game's own code rather than a reimplementation.
 
 Built on the [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain and
-following its shared house style (layout, CLI, harness, headless mode). It
-sits next to [cc](https://github.com/sp00nznet/cc), which takes Tiberian Dawn
-and Red Alert from their released source; this engine has no released source.
+following its shared house style (layout, CLI, harness, headless mode). Tiberian
+Dawn and Red Alert have released source and are ported from it; this engine has
+none, so it is recompiled. Tiberian Sun and Firestorm, the same engine's first
+games, get a repo of their own (ROADMAP).
 
 This is not [OpenRA](https://www.openra.net/). OpenRA is a separate engine
 that loads the original assets and reimplements the rules; this project runs
@@ -23,7 +24,7 @@ Westwood's own code, recompiled.
 | RTTI class recovery | 954 classes, 1,214 vtables, 6,665 virtual methods |
 | Function catalog (`disasm32`) | 24,940 functions, 91.8% of `.text`, 15 minutes |
 | Lift (`run_lift.py --all`) | 24,954 functions, 5.8M lines of C, **0 lift errors** |
-| Host (`build/ra2.exe`, 32-bit, pcrecomp `native32`) | boots: CRT and 3,952 static constructors, `WinMain`, COM servers, window, DirectDraw at 800x600x16, the Westwood logo and the intro movie through Bink, and the **main menu**, drawn and animated ([bringup.md](docs/bringup.md)) |
+| Host (`build/ra2.exe`, 32-bit, pcrecomp `native32`) | plays: the intro, every menu, skirmishes and both campaigns, 720p to 4K, in its own Direct3D 11 presenter or headless ([bringup.md](docs/bringup.md), [presenter.md](docs/presenter.md)) |
 | Playtest suite (`tools/playtest.py`) | **29 of 29 passing**: every menu screen, every way back, a skirmish start to score screen, the Allied and Soviet campaigns, 720p to 4K: scripted by button name, run in parallel, and `--original` runs the same script on the shipping code to tell lift bugs from host bugs ([testing.md](docs/testing.md)) |
 | Presenter (the default display) | the game in its own Direct3D 11 window: sharp-bilinear, smooth, CRT, nearest or integer scaling (F12), borderless fullscreen (F11), native resolution on high-DPI screens; `--classic` is the original DirectDraw ([presenter.md](docs/presenter.md)) |
 | HD vehicles | Voxel units, their shadows and aircraft drawn at 2x in the presenter, from four half-pixel-offset renders of each model, remembered by their 1x pixels; no change in frame time ([voxels.md](docs/voxels.md)) |

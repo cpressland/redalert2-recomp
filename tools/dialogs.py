@@ -3,9 +3,9 @@
 
 RA2's menus are Win32 dialog resources (98 of them). Each control's caption
 is a string-table key such as GUI:Skirmish, which the game looks up in its
-CSF at run time, so the template alone says what every button is. Scenarios
-(tools/scenarios.json) name buttons by those keys, and the host resolves a
-key to a control ID with this map instead of clicking pixel coordinates.
+CSF at run time, so the template alone says what every button is. The
+playtest cases (tools/playtest.py) press buttons by dialog and control ID,
+and this map is how those IDs were found.
 
 The output is derived from the binary, so it lives in work/ and is never
 committed (REPO_RULES section 3).
