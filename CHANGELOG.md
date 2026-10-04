@@ -95,6 +95,11 @@ a2.ini`.
   script, to tell lift bugs from host bugs.
 
 ### Fixed
+- A timer callback could run after its timer was killed (the callback waits
+  for the machine, which the game gives up inside timeKillEvent); Tiberian
+  Sun crashed on it under load. The host owns the multimedia timers and
+  waits out callbacks in flight. DirectDraw is asked for
+  `DDSCL_MULTITHREADED`.
 - A scripted press could fire a button twice: when nothing changed within
   3 s of the click, the runner sent the button's BN_CLICKED by hand, and on a
   busy machine the click was only queued, so both arrived; two Start Game
