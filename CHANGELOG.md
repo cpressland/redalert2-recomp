@@ -95,6 +95,12 @@ a2.ini`.
   script, to tell lift bugs from host bugs.
 
 ### Fixed
+- A scripted press could fire a button twice: when nothing changed within
+  3 s of the click, the runner sent the button's BN_CLICKED by hand, and on a
+  busy machine the click was only queued, so both arrived; two Start Game
+  presses hung a skirmish looking for start positions for players that were
+  not there. The runner now watches the dialog's thread and sends it only
+  for a click that was taken and produced no command.
 - A clean exit lost the last 4 KB of the log once the C runtime was linked in
   (`/MT`: ExitProcess flushes nothing); stderr is unbuffered.
 - Every vehicle was invisible: the voxel rasterizers' table entries had no
