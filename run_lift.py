@@ -47,6 +47,20 @@ SEEDS = os.path.join(_HERE, 'work', 'rtti_seeds.json')
 OUT = os.path.join(_HERE, 'src', 'recomp', 'gen')
 STATS = os.path.join(_HERE, 'work', 'lift_stats.json')
 
+# Entries the catalog does not find, so a clean checkout lifts them too
+# (docs/bringup.md 1 and 11). The CRT's static constructors are reachable only
+# through the _initterm table; two window procedures are named only by a
+# `mov reg, imm` behind a jump table. An unresolved ICALL answers eax = 0 and
+# carries on, so a missing one shows up far from its cause.
+RUN_SEEDS = [
+    # static constructors
+    0x0040FF90, 0x00410010, 0x0045B110, 0x004F4100, 0x005394C0, 0x0055F760,
+    0x006A4AF0, 0x006E88B0, 0x006F2A50, 0x0071B740, 0x00747090, 0x0076F700,
+    0x00777380,
+    # window procedures (skirmish setup and its sub-dialogs)
+    0x006163A0, 0x00618D40,
+]
+
 # Functions whose body is the host's instead of the lift: the host defines
 # ra2_hook_XXXXXXXX(void) and it runs like an import shim (arguments from
 # g_esp, pops its own return address). src/runtime/host.c.
@@ -223,9 +237,7 @@ def main():
     ap.add_argument('--virtual', action='store_true',
                     help='root the closure at every RTTI vtable method too')
     ap.add_argument('--split', type=int, default=400, help='functions per .c file')
-    # Addresses a run found that the catalog did not: the CRT's static
-    # constructors are reachable only through the _initterm table, and an
-    # unresolved ICALL answers eax = 0 and carries on (docs/bringup.md).
+    # More entries a run found, on top of RUN_SEEDS (seed_from_log.py JSON).
     ap.add_argument('--seeds', default=os.path.join(_HERE, 'work', 'run_seeds.json'),
                     help='seed_from_log.py JSON of unresolved targets from runs')
     args = ap.parse_args()
@@ -243,7 +255,7 @@ def main():
 
     # Vtable slots. Bound each by the next known entry: a slot landing mid-code
     # handed `ce` makes the extent walk descend the whole of .text.
-    want = set()
+    want = {a for a in RUN_SEEDS if cs <= a < ce and a not in byaddr}
     for path in [SEEDS] + ([args.seeds] if args.seeds else []):
         if os.path.exists(path):
             want |= {e['address'] for e in json.load(open(path))

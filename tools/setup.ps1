@@ -187,12 +187,12 @@ Step 7 "Making the shortcut"
 $lnk = Join-Path $Root 'Red Alert 2 (recomp).cmd'
 Set-Content -Path $lnk -Encoding ASCII -Value @(
   '@echo off',
-  'rem Runs the recompiled game headless for five minutes and records boot.mp4.',
+  'rem Plays the recompiled game in its own window: settings F10, scaling F12, fullscreen F11.',
   'cd /d "%~dp0"',
-  'build\ra2.exe --headless --run --watchdog 300 --record boot.mp4')
+  'start "" build\ra2.exe --run')
 Say "  $lnk"
 
 Write-Host ""
-Say "Done. Double-click 'Red Alert 2 (recomp).cmd' to run it; it records boot.mp4." 'Green'
-Say "It reaches the main menu today; the README's Status section says how far the project is."
+Say "Done. Double-click 'Red Alert 2 (recomp).cmd' to play." 'Green'
+Say "F10 opens the settings (scaling, fullscreen, HD vehicles, the game's resolution)."
 Read-Host "Press Enter to close" | Out-Null

@@ -19,7 +19,7 @@ ICALL: unresolved VA 0x00410010 from 0x007CBED3
 pointers; 13 of them were not in the catalog. An unresolved `RECOMP_ICALL`
 answers `eax = 0` and carries on, so the run went on without those globals.
 
-Fix: `run_lift.py --seeds` (default `work/run_seeds.json`) injects addresses
+Fix: `run_lift.py` injects addresses (`RUN_SEEDS`, and `--seeds` for more)
 the catalog lacks. All 3,952 table entries were read statically and the 13
 missing ones seeded at once. Root cause of most of them: see 4.
 
@@ -260,7 +260,7 @@ running the same script on the shipping code (`--original`):
 
 | Symptom | Whose | Cause and fix |
 |---|---|---|
-| A crash pressing Skirmish: execute of `0x006163A0` | catalog | Two window procedures named only by `mov reg, imm` and sitting behind jump tables were never catalogued (`0x006163A0`, `0x00618D40`). Seeded in `work/run_seeds.json`. |
+| A crash pressing Skirmish: execute of `0x006163A0` | catalog | Two window procedures named only by `mov reg, imm` and sitting behind jump tables were never catalogued (`0x006163A0`, `0x00618D40`). Seeded in `run_lift.py` (`RUN_SEEDS`). |
 | In-game recording sheared into stripes | host | The game plays at 640x480 and the menus at 800x600; the recorder now scales every frame to the size it started with. |
 | A fault in the recorder at the mode switch and at exit, on both machines | host | The recorder held a raw pointer to a primary surface the game had released (and at exit, the DirectDraw object that owns it). The host now holds its own reference, swaps it under a lock, and drops it when `IDirectDraw::Release` really frees the object. |
 | The battlefield black | host | Edge scrolling. The last menu press left the scripted cursor at x=720, and the game runs at 640x480: past the right edge, so auto-scroll ran the view to the map's black margin and held it there, on both machines. The host now keeps the cursor on screen across a mode change (as Windows does), and in-game cases put it in the middle of the battlefield. |
