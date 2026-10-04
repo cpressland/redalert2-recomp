@@ -14,7 +14,9 @@ $Toolkit = Join-Path (Split-Path -Parent $Root) 'tools'
 $T = Join-Path $Toolkit 'tools'
 $Log = Join-Path $Root 'setup.log'
 Set-Location $Root
-function Log($t) { Add-Content -Path $Log -Value $t -Encoding UTF8 }
+# A log line that cannot be written (the log open in another program) is
+# not a reason to stop the setup.
+function Log($t) { try { Add-Content -Path $Log -Value $t -Encoding UTF8 -ErrorAction Stop } catch {} }
 Log "==== setup $(Get-Date -Format s)"
 
 function Say($t, $c = 'Gray') { Write-Host $t -ForegroundColor $c; Log $t }
