@@ -26,6 +26,7 @@ py -3 tools/playtest.py skirmish-loop --original
 | `sp-*` | Single Player's New Campaign, Load Saved Game, Skirmish | the screen opened |
 | `options-*`, `movies-*` | sub-screens and the movie/credit players | the screen opened, no fault |
 | `skirmish-start` | Single Player, Skirmish, Start Game | in game: `Capture_Mouse()` logged and the picture moving |
+| `skirmish-build` | deploy the MCV, build a power plant and a barracks (placed at the first free spot of a ring around the yard), train a GI, all by mouse | the game's event log: `PRODUCE` three times, `PLACE`; the player alive (the Soviet AI's first rush arrives at about 3:40, so the orders have to be in by then) |
 | `skirmish-loop` | a skirmish nobody plays, through defeat, the score screen, Continue | the main menu opens again; the AI usually wins in about 4.5 minutes, but now and then not within the 12, and the case fails on timing (run it again) |
 | `campaign-*` | New Campaign, then the Allied or Soviet emblem | in game, and the player not defeated |
 | `lan-new` | Network, then New: the LAN host's setup screen | the screen opened, no fault |

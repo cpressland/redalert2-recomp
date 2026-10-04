@@ -133,11 +133,30 @@ static DWORD WINAPI dialog_poller(LPVOID unused) {
 static const char* volatile g_want_log;     /* what --waitlog waits for */
 static volatile LONG g_saw_log;
 
-int input_wants_log(void) { return g_want_log != NULL; }
+/* The last lines, with when they came, so a wait also sees a line printed
+ * since the previous step began: an order's own echo ("Adding event DEPLOY")
+ * lands while the key that gave it is still held, before the wait starts. */
+#define RING 64
+static struct { DWORD t; char s[160]; } g_ring[RING];
+static volatile LONG g_ring_n;
+static volatile DWORD g_step_t0;               /* when the previous step began */
+
+int input_wants_log(void) { return g_want_log != NULL || g_nev > 0; }
 
 void input_log_line(const char* line) {
     const char* w = g_want_log;
+    LONG k = InterlockedIncrement(&g_ring_n) - 1;
+    g_ring[k % RING].t = GetTickCount();
+    strncpy(g_ring[k % RING].s, line, sizeof g_ring[0].s - 1);
+    g_ring[k % RING].s[sizeof g_ring[0].s - 1] = 0;
     if (w && strstr(line, w)) InterlockedExchange(&g_saw_log, 1);
+}
+
+static int seen_since(const char* text, DWORD since) {
+    LONG n = g_ring_n;
+    for (LONG k = n - 1; k >= 0 && k >= n - RING; k--)
+        if ((LONG)(g_ring[k % RING].t - since) >= 0 && strstr(g_ring[k % RING].s, text)) return 1;
+    return 0;
 }
 
 /* ---- what the game reads --------------------------------------------------- */
@@ -280,6 +299,8 @@ static DWORD WINAPI script(LPVOID unused) {
         ev_t* e = &g_ev[i];
         LONG wait = (LONG)(e->t * 1000) + shift - (LONG)(GetTickCount() - g_t0);
         if (wait > 0) Sleep(wait);
+        DWORD prev_step = g_step_t0;
+        g_step_t0 = GetTickCount();
         HWND h = g_input_hwnd;
         if (e->kind == 'p') {
             const char* how = press(e->x, e->y, &shift);
@@ -295,7 +316,7 @@ static DWORD WINAPI script(LPVOID unused) {
         }
         if (e->kind == 'l') {
             DWORD w0 = GetTickCount();
-            InterlockedExchange(&g_saw_log, 0);
+            InterlockedExchange(&g_saw_log, seen_since(e->text, prev_step));
             g_want_log = e->text;
             while (!g_saw_log && GetTickCount() - w0 < 600000) Sleep(50);
             g_want_log = NULL;

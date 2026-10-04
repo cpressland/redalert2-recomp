@@ -8,9 +8,9 @@ In order; each is done when its check is in the suite or the docs.
    builds from pcrecomp `main` and Setup.cmd needs no integration branch.
 2. **Setup.cmd end to end** from a clean folder: copy the game, catalog,
    lift, build, shortcut. The README's Quick start, proven.
-3. **Play, not just reach.** In-game orders in the suite (`--drag` and
-   modifier clicks are in): deploy, build a power plant and a barracks, train
-   a unit, checked in the game's own log; then a mission played to its win.
+3. **Play, not just reach.** Done: `skirmish-build` deploys, builds a power
+   plant and a barracks and trains a GI, checked in the game's event log.
+   Next: a mission played to its win.
    A fight that throws voxel debris under the camera comes with it, and HD
    voxel animations go on by default once it passes.
 4. **Red Alert 2 itself** (`game.exe`, same install): catalog, lift, the same

@@ -6,6 +6,12 @@ versions follow [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `skirmish-build`: deploy, build a power plant and a barracks, train a GI,
+  by mouse, checked in the game's event log; `log=` expectations in the
+  playtest runner. A `--waitlog` also sees a line printed since the previous
+  step began (an order's echo lands while its key is still held).
+- Setup.cmd proven from a clean folder (the ZIP download): two bugs fixed on
+  the way, a variable that clobbered the toolkit path and a locked log.
 - HD voxel animations and debris (VoxelAnimClass), opt-in with
   `RA2_HD_VOXEL_ANIMS=1` until a test puts one on screen (docs/voxels.md).
 - Scripted input: `--drag x1,y1,x2,y2@s` (band selection) and modifier

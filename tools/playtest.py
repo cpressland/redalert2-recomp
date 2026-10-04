@@ -196,6 +196,37 @@ case('skirmish-forcefire', SP().press(SINGLE, 'Skirmish', SKIRMISH).press(SKIRMI
      .click(236, 213, after=2).key('0x44', after=1)
      .drag(8, 8, 464, 440, after=15).click(352, 158, after=1, mods='c').click(110, 277, after=20, mods='c'),
      180, ingame=True)
+# Building and training: deploy the MCV; build a power plant from the
+# sidebar's first icon and place it beside the construction yard; then a
+# barracks (the second row's first icon, once power is up) the same way; then
+# the infantry tab and a GI. Each order is checked in the game's own event log
+# (PRODUCE for each of the three, PLACE for the two buildings). Sidebar
+# coordinates are for 640x480 (tabs: buildings, defences, infantry, vehicles);
+# a hover first, as a player's cursor would be.
+# Around the construction yard, near first: the first spot no unit stands on
+# builds; a click on a taken spot is refused and costs nothing.
+PLACES = [(330, 250), (150, 250), (236, 320), (330, 320), (120, 170), (130, 330), (380, 180),
+          (360, 360), (90, 260), (400, 280), (236, 390), (110, 400), (380, 420), (70, 150)]
+
+
+def place(script):
+    for x, y in PLACES:
+        script = script.click(x, y, after=1)
+    return script
+
+
+case('skirmish-build', place(place(
+    SP().press(SINGLE, 'Skirmish', SKIRMISH).press(SKIRMISH, 'StartGame')
+    .waitlog(INGAME).move(236, 240, after=2).key('0x48', after=10)
+    .click(236, 213, after=2).key('0x44', after=1).waitlog('Adding event DEPLOY')
+    .move(523, 251, after=8).click(523, 251, after=1)                   # power plant
+    .move(523, 251, after=28).click(523, 251, after=1))                  # ready: pick it up
+    .move(523, 300, after=4).click(523, 300, after=1)                   # barracks
+    .move(523, 300, after=31).click(523, 300, after=1))                  # ready: pick it up
+    .move(573, 210, after=4).click(573, 210, after=1)                   # the infantry tab (third)
+    .move(523, 251, after=2).click(523, 251, after=1),                  # a GI
+    230, ingame=True, alive=True, log={'Adding event PRODUCE': 3, 'Adding event PLACE': 2})
+
 case('skirmish-loop', SP().press(SINGLE, 'Skirmish', SKIRMISH).press(SKIRMISH, 'StartGame')
      .waitlog(INGAME).move(236, 240, after=2).key('0x48', after=10)
      .press(0x108, 'Continue', MAIN), 720, ingame=True)
@@ -325,6 +356,14 @@ def run(name, args, seconds, expect, every, original=False):
         seen.append('%sx%s' % modes[-1])
     if expect.get('alive') and defeated:
         bad.append('the human player was defeated')
+    # log: {text: at least n}, lines the game's own debug log must print
+    # ("Adding event PRODUCE" for each order to build or train).
+    for text, n in expect.get('log', {}).items():
+        got = sum(text in l for l in lines)
+        if got < n:
+            bad.append('"%s" %d times, wanted %d' % (text, got, n))
+        elif n:
+            seen.append('%s x%d' % (text.split()[-1].lower(), got))
     if 'exit' in expect and code != expect['exit']:
         bad.append('expected exit %d' % expect['exit'])
     elif 'exit' not in expect and code not in (0, 4):
