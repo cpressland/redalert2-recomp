@@ -36,6 +36,7 @@ original/
 # Generated from the binary, never committed: the lifted C, the catalog,
 # RTTI/vtable dumps and every other analysis of gamemd.exe.
 src/recomp/gen/
+src/recomp/gen_game/
 work/
 analysis/
 

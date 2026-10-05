@@ -22,9 +22,17 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 set(PCRECOMP "${CMAKE_SOURCE_DIR}/../tools" CACHE PATH "pcrecomp checkout")
-file(GLOB GEN_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/recomp/gen/*.c")
+# RA2_TARGET: gamemd (Yuri's Revenge, the default) or game (Red Alert 2), the
+# lift run_lift.py --target made; build each in its own folder.
+set(RA2_TARGET "gamemd" CACHE STRING "gamemd (Yuri's Revenge) or game (Red Alert 2)")
+if(RA2_TARGET STREQUAL "game")
+  set(GEN_DIR src/recomp/gen_game)
+else()
+  set(GEN_DIR src/recomp/gen)
+endif()
+file(GLOB GEN_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/${GEN_DIR}/*.c")
 if(NOT GEN_SOURCES)
-  message(FATAL_ERROR "src/recomp/gen is empty -- run `py -3 run_lift.py` first")
+  message(FATAL_ERROR "${GEN_DIR} is empty -- run `py -3 run_lift.py --target ${RA2_TARGET}` first")
 endif()
 
 add_executable(ra2
@@ -39,7 +47,7 @@ add_executable(ra2
   ${GEN_SOURCES}
 )
 target_include_directories(ra2 PRIVATE
-  src/runtime src/recomp/gen ${PCRECOMP}/runtime/native32 ${PCRECOMP}/runtime/recomp32)
+  src/runtime ${GEN_DIR} ${PCRECOMP}/runtime/native32 ${PCRECOMP}/runtime/recomp32)
 # RECOMP_RETADDR=0u: a stack imbalance during bring-up leaks a harmless 0, not
 # 0xDEAD0000 into a size argument (forcecommander).
 target_compile_definitions(ra2 PRIVATE RECOMP_RETADDR=0u _CRT_SECURE_NO_WARNINGS

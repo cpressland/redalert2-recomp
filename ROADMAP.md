@@ -12,8 +12,11 @@ Setup.cmd has been run end to end from a clean folder (the ZIP download).
    Next: a mission played to its win.
    A fight that throws voxel debris under the camera comes with it, and HD
    voxel animations go on by default once it passes.
-2. **Red Alert 2 itself** (`game.exe`, same install): catalog, lift, the same
-   host and patches re-found by their shapes; the suite's cases for its menus.
+2. **Red Alert 2 itself** (`game.exe`, same install). Done: catalog, lift,
+   the same host and patches re-found by their shapes (sidebar, options,
+   HD vehicles), the suite at 29 of 30 (bringup.md, section 13).
+   Next: its speed at 1440p and 4K, where it draws far fewer frames than
+   Yuri's Revenge.
 3. **The rest of the menus** in the suite: the remaining Options screens,
    Load with a save present, WOnline as far as it goes
    without servers.

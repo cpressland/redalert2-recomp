@@ -29,6 +29,7 @@
 #include "input.h"
 #include "present.h"
 #include "hdvox.h"
+#include "recomp_target.h"
 
 int host_frame(uint32_t* out, int maxw, int maxh, int* w, int* h);   /* host.c */
 int host_frame_hd(uint32_t* out, int maxw, int maxh, int* w, int* h);   /* host.c: 2x, HD voxels */
@@ -399,13 +400,20 @@ static void settings_save(HWND hw) {
     }
 }
 
-/* The game's own resolution: RA2MD.INI [Video] for the next start, and the
- * options in memory (GameOptionsClass at 0x00A8EB60, width +0x24 and height
- * +0x28, the fields its "Resolution = %d X %d" log line prints) so the next
- * game opens at it and the game's own save on exit does not put the old one
- * back. The memory is only written while it holds a plausible resolution. */
-#define OPT_W ((volatile int32_t*)(uintptr_t)(0x00A8EB60u + 0x24))
-#define OPT_H ((volatile int32_t*)(uintptr_t)(0x00A8EB60u + 0x28))
+/* The game's own resolution: the INI's [Video] for the next start, and the
+ * options in memory (GameOptionsClass, the fields its "Resolution = %d X %d"
+ * log line prints) so the next game opens at it and the game's own save on
+ * exit does not put the old one back. The memory is only written while it
+ * holds a plausible resolution. */
+#ifdef RA2_TARGET_GAMEMD
+#define GAME_OPTIONS 0x00A8EB60u
+#define OPT_W_AT 0x24
+#else
+#define GAME_OPTIONS 0x00A40B18u      /* Red Alert 2: width at +0x20 */
+#define OPT_W_AT 0x20
+#endif
+#define OPT_W ((volatile int32_t*)(uintptr_t)(GAME_OPTIONS + OPT_W_AT))
+#define OPT_H ((volatile int32_t*)(uintptr_t)(GAME_OPTIONS + OPT_W_AT + 4))
 static const int k_res[][2] = { { 800, 600 }, { 1024, 768 }, { 1280, 720 }, { 1366, 768 }, { 1600, 900 },
                                 { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 } };
 #define NRES ((int)(sizeof k_res / sizeof k_res[0]))
@@ -414,7 +422,7 @@ static int opt_ok(void) { return *OPT_W >= 320 && *OPT_W <= 8192 && *OPT_H >= 20
 
 static void set_game_resolution(int w, int h) {
     char path[MAX_PATH], v[16];
-    GetFullPathNameA("RA2MD.INI", MAX_PATH, path, NULL);       /* the game runs in its folder */
+    GetFullPathNameA(RA2_INI_NAME, MAX_PATH, path, NULL);       /* the game runs in its folder */
     _snprintf(v, sizeof v - 1, "%d", w), v[sizeof v - 1] = 0;
     WritePrivateProfileStringA("Video", "ScreenWidth", v, path);
     _snprintf(v, sizeof v - 1, "%d", h), v[sizeof v - 1] = 0;
@@ -559,7 +567,7 @@ static DWORD WINAPI present_thread(LPVOID arg) {
                 wx = sx, wy = sy, ww = sw, wh = sh;
         }
     }
-    HWND hw = CreateWindowExA(0, "RA2Presenter", "Yuri's Revenge (recomp)", WS_OVERLAPPEDWINDOW,
+    HWND hw = CreateWindowExA(0, "RA2Presenter", RA2_TITLE " (recomp)", WS_OVERLAPPEDWINDOW,
                               wx, wy, ww, wh, NULL, NULL, wc.hInstance, NULL);
     if (!hw || !d3d_init(hw)) {
         fprintf(stderr, "[present] could not start; run with --classic for the original display\n");

@@ -25,6 +25,7 @@
 #include "oracle.h"
 #include "present.h"
 #include "hdvox.h"
+#include "recomp_target.h"   /* the binary this build runs: run_lift.py --target */
 
 extern const uint32_t ra2_entry_va;    /* recomp_dispatch.c */
 
@@ -871,7 +872,7 @@ static DWORD WINAPI mute_thread(LPVOID unused) {
     }
 }
 
-void ra2_hook_004068E0(void) {
+void ra2_hook_debuglog(void) {
     if (g_debuglog || input_wants_log()) {
         char buf[1024];
         const char* fmt = (const char*)(uintptr_t)MEM32(g_esp + 4);
@@ -964,6 +965,36 @@ static LONG CALLBACK crash(EXCEPTION_POINTERS* ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+/* RA2_PROFILE=1: which lifted function is running, sampled every millisecond
+ * (the last one entered), the most frequent printed when the watchdog ends
+ * the run. How the voxel renderer was found (docs/voxels.md). */
+#define PROF_SLOTS 65536
+static struct { uint32_t va, n; } g_prof[PROF_SLOTS];
+static DWORD WINAPI profiler(LPVOID unused) {
+    (void)unused;
+    timeBeginPeriod(1);
+    for (;;) {
+        uint32_t va = g_cur_func;
+        for (uint32_t h = (va * 2654435761u) >> 16, k = 0; va && k < PROF_SLOTS; k++, h = (h + 1) & (PROF_SLOTS - 1))
+            if (g_prof[h].va == va || !g_prof[h].va) { g_prof[h].va = va; g_prof[h].n++; break; }
+        Sleep(1);
+    }
+}
+static int prof_cmp(const void* a, const void* b) {
+    return (int)((const uint32_t*)b)[1] - (int)((const uint32_t*)a)[1];
+}
+static void profile_report(void) {
+    static uint32_t top[PROF_SLOTS][2];
+    int n = 0;
+    uint64_t total = 0;
+    for (int i = 0; i < PROF_SLOTS; i++)
+        if (g_prof[i].va) top[n][0] = g_prof[i].va, top[n][1] = g_prof[i].n, total += g_prof[i].n, n++;
+    if (!n) return;
+    qsort(top, n, sizeof top[0], prof_cmp);
+    for (int i = 0; i < n && i < 40; i++)
+        fprintf(stderr, "[profile] sub_%08X %6u  %4.1f%%\n", top[i][0], top[i][1], 100.0 * top[i][1] / total);
+}
+
 static DWORD WINAPI watchdog(LPVOID unused) {
     (void)unused;
     Sleep(g_watchdog_s * 1000);
@@ -971,6 +1002,7 @@ static DWORD WINAPI watchdog(LPVOID unused) {
             g_watchdog_s, g_cur_func, g_cur_import, g_icall_count, g_frames);
     native32_dump_icalls(8);
     probe_report();
+    profile_report();
     record_close();
     recomp_trace_flush();
     fflush(stderr);
@@ -979,7 +1011,7 @@ static DWORD WINAPI watchdog(LPVOID unused) {
 }
 
 int main(int argc, char** argv) {
-    const char* exe = "game\\gamemd.exe";
+    const char* exe = "game\\" RA2_EXE_NAME;
     const char* game = "game";
     char exe_full[MAX_PATH], game_full[MAX_PATH];
     int run = 0;
@@ -1043,7 +1075,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--native-trace")) native32_trace_native = 1;
         else if (!strcmp(argv[i], "--callbacks")) native32_trace_callbacks = 1;
         else {
-            printf("usage: ra2 [--run] [--headless | --classic | [--fullscreen] [--scale sharp|smooth|crt|nearest|integer]] [--record out.mp4] [--frames N] [--exe game\\gamemd.exe] [--game game]\n"
+            printf("usage: ra2 [--run] [--headless | --classic | [--fullscreen] [--scale sharp|smooth|crt|nearest|integer]] [--record out.mp4] [--frames N] [--exe game\\" RA2_EXE_NAME "] [--game game]\n"
                    "           [--press DLG:CTRL@s] [--select DLG:CTRL=N@s] [--waitlog TEXT@s] [--move|--click x,y@s] [--key [c][s][a]+vk@s] [--wait VA@s]\n"
                    "           [--watchdog S] [--probe VA] [--debuglog] [--original] [--native-trace] [--callbacks]\n"
                    "           [--hd-voxels] [--hd-voxels-dump DIR] [--mute] [--args FILE]\n");
@@ -1059,7 +1091,7 @@ int main(int argc, char** argv) {
         GetFullPathNameA(g_record, MAX_PATH, rec_full, NULL);
         g_record = rec_full;
     }
-    _snprintf(g_guest_exe, sizeof g_guest_exe - 1, "%s\\gamemd.exe", game_full);
+    _snprintf(g_guest_exe, sizeof g_guest_exe - 1, "%s\\" RA2_EXE_NAME, game_full);
     _snprintf(g_guest_cmdline, sizeof g_guest_cmdline - 1, "\"%s\"", g_guest_exe);
 
     /* binkw32.dll ships in the game folder, so imports bind from there. But the
@@ -1094,9 +1126,10 @@ int main(int argc, char** argv) {
     if (g_original) {
         /* The shipping machine code under the same host, shims and input
          * (oracle.c): the reference a lifted run is compared against. */
-        static const oracle_hook_t hooks[] = { { 0x004068E0u, ra2_hook_004068E0 } };
+        static const oracle_hook_t hooks[] = { { RA2_HOOK_DEBUGLOG_VA, ra2_hook_debuglog } };
         if (!SetCurrentDirectoryA(game_full)) { fprintf(stderr, "cannot enter %s\n", game_full); return 1; }
         if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
+        if (getenv("RA2_PROFILE")) CloseHandle(CreateThread(NULL, 0, profiler, NULL, 0, NULL));
         if (g_record) CloseHandle(CreateThread(NULL, 0, recorder, NULL, 0, NULL));
         input_start();
         if (!g_classic && !g_headless) present_start(g_scale_mode, g_fullscreen);
@@ -1106,7 +1139,7 @@ int main(int argc, char** argv) {
 
     native32_init();
     AddVectoredExceptionHandler(0, crash);
-    printf("Red Alert 2: Yuri's Revenge recomp host\n  lifted functions in dispatch: %u\n",
+    printf(RA2_TITLE " recomp host\n  lifted functions in dispatch: %u\n",
            recomp_dispatch_count);
 
     uint32_t span = native32_map(exe_full, RA2_IMAGE_BASE);
@@ -1122,6 +1155,7 @@ int main(int argc, char** argv) {
     /* The game opens its MIX files relative to its working directory. */
     if (!SetCurrentDirectoryA(game_full)) { fprintf(stderr, "cannot enter %s\n", game_full); return 1; }
     if (g_watchdog_s) CloseHandle(CreateThread(NULL, 0, watchdog, NULL, 0, NULL));
+    if (getenv("RA2_PROFILE")) CloseHandle(CreateThread(NULL, 0, profiler, NULL, 0, NULL));
     if (g_record) CloseHandle(CreateThread(NULL, 0, recorder, NULL, 0, NULL));
     /* A script drives the virtual display, headless or in the presenter (the
      * lab's LAN games: a window to snap, a script to play); the script's

@@ -35,13 +35,27 @@
 #include <stdlib.h>
 #include <string.h>
 #include "hdvox.h"
+#include "recomp_target.h"
 
+#ifdef RA2_TARGET_GAMEMD
 #define VOX_COLOUR ((uint8_t*)(uintptr_t)0x00B2FF78u)   /* 256x256 palette indices */
 #define VOX_DEPTH  ((uint8_t*)(uintptr_t)0x00B1D5E0u)   /* 256x256, with the Z flag */
 #define VOX_BBOX   ((uint32_t*)(uintptr_t)0x00B2FB60u)  /* x, y, w, h, list count */
 #define VOX_PAL    ((const uint8_t*)(uintptr_t)0x00B2FB78u)
 #define STAGING    (*(const uint32_t*)(uintptr_t)0x00B1D13Cu)
 #define FRAME_SURF (*(const uint32_t*)(uintptr_t)0x00887308u)
+#define VOX_DIRTY  0x00B1CFC0u                           /* the staging's dirty rect */
+#define VOX_SHADOW 0x00B2D928u                           /* the shadow mask buffer */
+#else                                                    /* Red Alert 2's, by shape */
+#define VOX_COLOUR ((uint8_t*)(uintptr_t)0x00AE3408u)
+#define VOX_DEPTH  ((uint8_t*)(uintptr_t)0x00AD0A70u)
+#define VOX_BBOX   ((uint32_t*)(uintptr_t)0x00AE2FF0u)
+#define VOX_PAL    ((const uint8_t*)(uintptr_t)0x00AE3008u)
+#define STAGING    (*(const uint32_t*)(uintptr_t)0x00AD0604u)
+#define FRAME_SURF (*(const uint32_t*)(uintptr_t)0x00839950u)
+#define VOX_DIRTY  0x00AD0490u
+#define VOX_SHADOW 0x00AE0DB8u
+#endif
 
 int ra2_vox_hd_on;
 int16_t ra2_vox_dx, ra2_vox_dy;          /* read by the rasterizer patch, 8.8 */
@@ -437,7 +451,7 @@ void ra2_vox_unit_copy(uint32_t dest, uint32_t esp) {
     /* The source is the staging's dirty rect, the parts' union (0x00B1CFC0);
      * the stack's third rect is only the staging's bounds. Clip the
      * destination to the surface, the source with it. */
-    const int32_t* dirty = (const int32_t*)(uintptr_t)0x00B1CFC0u;
+    const int32_t* dirty = (const int32_t*)(uintptr_t)VOX_DIRTY;
     int x = dr[0], y = dr[1], w = dr[2], h = dr[3], sx = dirty[0], sy = dirty[1];
     (void)sr;
     if (x < 0) sx -= x, w += x, x = 0;
@@ -506,7 +520,7 @@ void ra2_vox_shadow_blit(uint32_t dest, uint32_t esp) {
     const int32_t* pt = (const int32_t*)(uintptr_t)a[2];
     const uint32_t* ds = (const uint32_t*)(uintptr_t)dest;
     g_sh_open = 0;
-    if (!ra2_vox_hd_on || a[0] != 0x00B2D928u) return;
+    if (!ra2_vox_hd_on || a[0] != VOX_SHADOW) return;
     if (ds[4] != 2) { g_sh_skipped++; return; }  /* not the 16-bit battlefield */
     int x = pt[0], y = pt[1], w = r[2], h = r[3], sx = r[0], sy = r[1];
     if (x < 0) sx -= x, w += x, x = 0;

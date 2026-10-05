@@ -22,6 +22,7 @@
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <commctrl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -247,7 +248,9 @@ static LRESULT CALLBACK watch_getmsg(int code, WPARAM wp, LPARAM lp) {
 
 static LRESULT CALLBACK watch_callwnd(int code, WPARAM wp, LPARAM lp) {
     const CWPSTRUCT* m = (const CWPSTRUCT*)lp;
-    if (code >= 0 && m->message == WM_COMMAND && m->hwnd == g_watch_dlg &&
+    /* to whichever window is the button's parent: a control inside a panel
+     * of the dialog tells the panel, not the dialog */
+    if (code >= 0 && m->message == WM_COMMAND && (HWND)m->lParam == g_watch_btn &&
         LOWORD(m->wParam) == g_watch_ctrl && HIWORD(m->wParam) == BN_CLICKED)
         InterlockedIncrement(&g_watch_cmd);
     return CallNextHookEx(NULL, code, wp, lp);
@@ -297,7 +300,7 @@ static const char* press(int dlg, int ctrl, LONG* shift) {
         if (!IsWindow(d) || g_dialogs_opened != opens || g_watch_cmd != cmd0) how = "click";
         else if (!t_up && GetTickCount() - t0 > 120000) how = "click, never taken";
         else if (t_up && GetTickCount() - t_up > 2000) {
-            PostMessageA(d, WM_COMMAND, MAKEWPARAM(ctrl, BN_CLICKED), (LPARAM)c);
+            PostMessageA(GetParent(c), WM_COMMAND, MAKEWPARAM(ctrl, BN_CLICKED), (LPARAM)c);
             how = "BN_CLICKED";
         }
     }
@@ -320,6 +323,12 @@ static const char* select_item(int dlg, int ctrl, int n, LONG* shift) {
     HWND c = GetDlgItem(d, ctrl);
     if (!c) return "no such control";
     GetClassNameA(c, cls, sizeof cls);
+    if (!_stricmp(cls, TRACKBAR_CLASSA)) {     /* a slider: N is its position */
+        SendMessageA(c, TBM_SETPOS, TRUE, n);
+        PostMessageA(GetParent(c), (GetWindowLongA(c, GWL_STYLE) & TBS_VERT) ? WM_VSCROLL : WM_HSCROLL,
+                     MAKEWPARAM(TB_ENDTRACK, 0), (LPARAM)c);
+        return "slider";
+    }
     int combo = !_stricmp(cls, "ComboBox");
     SendMessageA(c, combo ? CB_SETCURSEL : LB_SETCURSEL, n, 0);
     PostMessageA(d, WM_COMMAND, MAKEWPARAM(ctrl, combo ? CBN_SELCHANGE : LBN_SELCHANGE), (LPARAM)c);

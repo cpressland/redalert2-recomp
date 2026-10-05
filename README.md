@@ -62,6 +62,7 @@ for comparison.
 | High resolution / widescreen | 720p, 1080p, 1440p and 4K in game, skirmish and campaign, picked from the presenter's settings menu (F10) or `RA2MD.INI`; 4K needed a fix to RA2's own sidebar ([hires.md](docs/hires.md)) |
 | Headless mode | `--headless --record out.mp4 --frames N`: hidden window, no mode change, the primary surface recorded to ffmpeg ([host.md](docs/host.md)) |
 | Multiplayer | RA2 against RA2 over the LAN between two PCs, scripted on both sides into the game ([testing.md](docs/testing.md)) |
+| Red Alert 2 (`game.exe`) | a second target from the same install: 23,202 functions, 0 lift errors, the suite at 29 of 30 (4K is slow), HD vehicles ([bringup.md](docs/bringup.md), section 13) |
 | Compilers | MSVC (x86); clang-cl (x86) with pcrecomp #47 |
 | Conformance harness | `tools/conformance.py`: **8/8** boot milestones up to the main menu, lift 0 errors, against `conformance.json`; fails on regression |
 
@@ -176,6 +177,27 @@ some-folder\
    ```
    build\ra2.exe --run
    ```
+
+### Red Alert 2 itself (`game.exe`)
+
+The same install holds Red Alert 2 without the expansion, and it builds
+the same way as a second target, into its own folders. From step 3, with
+`game.exe` and `work\game\`:
+
+```
+py -3 ..\tools\tools\cpp\rtti.py game\game.exe -o work\game\rtti.json --seeds work\game\rtti_seeds.json
+py -3 ..\tools\tools\disasm\disasm32.py game\game.exe -o work\game\functions.json --seed-functions work\game\rtti_seeds.json
+py -3 run_lift.py --all --target game
+set BUILD_DIR=build-game
+set CMAKE_ARGS=-DRA2_TARGET=game
+build.cmd
+build-game\ra2.exe --run
+```
+
+Expected: `Functions: 23192` and `lifted 23202   not-lifted stubs 0   errors 0`.
+The presenter, hi-res, HD vehicles and the playtest suite
+(`RA2_TARGET=game`, docs/testing.md) all work on it; at 1440p and above it
+runs slower than Yuri's Revenge does (being looked at).
 
 The usual trip-ups: `python` opening the Microsoft Store (that is Windows' alias;
 use `py -3`), and a PATH change that needs a new terminal window.

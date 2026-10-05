@@ -62,13 +62,13 @@ RUN_SEEDS = [
 ]
 
 # Functions whose body is the host's instead of the lift: the host defines
-# ra2_hook_XXXXXXXX(void) and it runs like an import shim (arguments from
+# ra2_hook_<name>(void) and it runs like an import shim (arguments from
 # g_esp, pops its own return address). src/runtime/host.c.
 HOOKS = {
     # The debug printf. Compiled out of the retail build (a bare `ret`), so
     # the host gives it a body: --debuglog prints the game's own log, which
     # says what init is doing at a fraction of --argtrace's cost.
-    0x004068E0,
+    0x004068E0: 'debuglog',
 }
 
 # ---- remaster patches: C emitted after one instruction ---------------------
@@ -79,7 +79,7 @@ HOOKS = {
 SIDEBAR_ROWS_MAX = 30
 
 
-def sidebar_rows_patches(code, cs):
+def sidebar_rows_patches(code, cs, lo=0x006A5000, hi=0x006AD000, globals_=(0x00886F9C, 0x00B0B4F8)):
     """The sidebar's cameo rows, capped at 30 so 4K fits its button array.
 
     The sidebar keeps its cameo buttons in a static array at 0x00B07E80: 240
@@ -95,11 +95,11 @@ def sidebar_rows_patches(code, cs):
     """
     md = Cs(CS_ARCH_X86, CS_MODE_32)
     magic = b'\xb8\x1f\x85\xeb\x51'                      # mov eax, 0x51EB851F
-    refs = (b'\x9c\x6f\x88\x00', b'\xf8\xb4\xb0\x00')   # 0x00886F9C, 0x00B0B4F8
+    refs = tuple(g.to_bytes(4, 'little') for g in globals_)   # its height, its top
     out, i = {}, code.find(magic)
     while i != -1:
         va = cs + i
-        if 0x006A5000 <= va < 0x006AD000 and any(r in code[max(0, i - 0x30):i] for r in refs):
+        if lo <= va < hi and any(r in code[max(0, i - 0x30):i] for r in refs):
             shr = None
             for ins in md.disasm(code[i:i + 0x30], va):
                 if ins.mnemonic == 'shr' and ins.op_str.endswith(', 0x1f'):
@@ -215,6 +215,22 @@ HD_VOXEL_PATCHES = {
 }
 
 
+# The same sites in Red Alert 2 (game.exe), found by their shapes: the same
+# instructions and stack offsets, but for the frame blitter's frame (0x48).
+HD_VOXEL_SITES_GAME = {
+    0x0075683E: 0x00719BEE, 0x00706FEF: 0x006D25E3, 0x00707233: 0x006D27E6, 0x00707235: 0x006D27E8,
+    0x004373B0: 0x00434B40, 0x007067E4: 0x006D1E18, 0x0073B43F: 0x006FF66C, 0x0073B446: 0x006FF670,
+    0x007568F0: 0x00719CA0, 0x00706C10: 0x006D2220, 0x00707387: 0x006D28F9, 0x00707431: 0x006D29A1,
+    0x00707432: 0x006D29A2, 0x00749CFA: 0x0070D14A, 0x00749D6D: 0x0070D1BB, 0x00749D6E: 0x0070D1BC,
+    0x00749DE6: 0x0070D234, 0x00749EE2: 0x0070D32E, 0x00749EE4: 0x0070D330,
+}
+HD_VOXEL_PATCHES_GAME = {
+    HD_VOXEL_SITES_GAME[va]: c.replace('sub_00754510', 'sub_007178E0').replace('sub_007542F0', 'sub_007176C0')
+                              .replace('esp + 0x4C + 4', 'esp + 0x48 + 4')
+    for va, c in HD_VOXEL_PATCHES.items()
+}
+
+
 def apply_patches(body, patches):
     """Add each patch's C after the line that lifts its instruction."""
     for va, c in patches.items():
@@ -226,11 +242,60 @@ def apply_patches(body, patches):
     return body
 
 
+# Red Alert 2 itself (game.exe, the same install) is a second target: its own
+# catalog in work/game, its lift in src/recomp/gen_game, its own seeds, hooks
+# and patches. Everything address-bound the host needs comes to it through
+# recomp_target.h, written beside the lifted C.
+RUN_SEEDS_GAME = [
+    0x00524FF0,   # a static constructor (the _initterm table at 0x007C9000)
+    0x007492D0,   # a callback named only by an immediate (0x007458D8: mov edx, 0x7492d0)
+]
+HOOKS_GAME = {
+    0x004068F0: 'debuglog',            # the bare-ret debug printf, 1,592 callers
+}
+
+
+def targets():
+    return {
+        'gamemd': dict(exe=EXE, catalog=CATALOG, seeds=SEEDS, out=OUT, stats=STATS,
+                       run_seeds=RUN_SEEDS, hooks=HOOKS, exe_name='gamemd.exe', ini_name='RA2MD.INI',
+                       title="Yuri's Revenge",
+                       patches=lambda code, cs: {**sidebar_rows_patches(code, cs), **HD_VOXEL_PATCHES}),
+        'game': dict(exe=os.path.join(_HERE, 'game', 'game.exe'),
+                     catalog=os.path.join(_HERE, 'work', 'game', 'functions.json'),
+                     seeds=os.path.join(_HERE, 'work', 'game', 'rtti_seeds.json'),
+                     out=os.path.join(_HERE, 'src', 'recomp', 'gen_game'),
+                     stats=os.path.join(_HERE, 'work', 'game', 'lift_stats.json'),
+                     run_seeds=RUN_SEEDS_GAME, hooks=HOOKS_GAME, exe_name='game.exe', ini_name='RA2.INI',
+                     title='Red Alert 2',
+                     # Red Alert 2's sidebar: its code at 0x0067B000..0x00683000, its
+                     # height 0x0083962C and top 0x00ABCD64, the globals the same divide
+                     # by 50 reads as Yuri's Revenge's does.
+                     patches=lambda code, cs: {**sidebar_rows_patches(code, cs, 0x0067B000, 0x00683000,
+                                                                     (0x0083962C, 0x00ABCD64)),
+                                               **HD_VOXEL_PATCHES_GAME}),
+    }
+
+
+def write_target_header(out, name, t):
+    """recomp_target.h: what the host needs to know about the binary it runs."""
+    debuglog = [a for a, h in t['hooks'].items() if h == 'debuglog']
+    with open(os.path.join(out, 'recomp_target.h'), 'w', newline='\n') as f:
+        f.write('/* Generated by run_lift.py --target %s: the binary this build runs. */\n#pragma once\n' % name)
+        f.write('#define RA2_TARGET_%s 1\n' % name.upper())
+        f.write('#define RA2_EXE_NAME "%s"\n' % t['exe_name'])
+        f.write('#define RA2_INI_NAME "%s"\n' % t['ini_name'])
+        f.write('#define RA2_TITLE "%s"\n' % t['title'])
+        f.write('#define RA2_HOOK_DEBUGLOG_VA 0x%08Xu\n' % (debuglog[0] if debuglog else 0))
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--exe', default=EXE)
-    ap.add_argument('--catalog', default=CATALOG)
-    ap.add_argument('--out', default=OUT)
+    ap.add_argument('--target', choices=('gamemd', 'game'), default='gamemd',
+                    help="gamemd: Yuri's Revenge (the default); game: Red Alert 2")
+    ap.add_argument('--exe')
+    ap.add_argument('--catalog')
+    ap.add_argument('--out')
     ap.add_argument('--roots', default='', help='comma-separated extra root VAs')
     ap.add_argument('--max', type=int, default=3000, help='closure size cap')
     ap.add_argument('--all', action='store_true', help='lift every function')
@@ -238,9 +303,15 @@ def main():
                     help='root the closure at every RTTI vtable method too')
     ap.add_argument('--split', type=int, default=400, help='functions per .c file')
     # More entries a run found, on top of RUN_SEEDS (seed_from_log.py JSON).
-    ap.add_argument('--seeds', default=os.path.join(_HERE, 'work', 'run_seeds.json'),
+    ap.add_argument('--seeds', default=None,
                     help='seed_from_log.py JSON of unresolved targets from runs')
     args = ap.parse_args()
+    tgt = targets()[args.target]
+    args.exe = args.exe or tgt['exe']
+    args.catalog = args.catalog or tgt['catalog']
+    args.out = args.out or tgt['out']
+    if args.seeds is None:
+        args.seeds = os.path.join(os.path.dirname(tgt['catalog']), 'run_seeds.json')
     if not os.path.exists(args.catalog):
         sys.exit('no catalog at %s -- run disasm32.py first (README, Step by step)' % args.catalog)
 
@@ -255,8 +326,8 @@ def main():
 
     # Vtable slots. Bound each by the next known entry: a slot landing mid-code
     # handed `ce` makes the extent walk descend the whole of .text.
-    want = {a for a in RUN_SEEDS if cs <= a < ce and a not in byaddr}
-    for path in [SEEDS] + ([args.seeds] if args.seeds else []):
+    want = {a for a in tgt['run_seeds'] if cs <= a < ce and a not in byaddr}
+    for path in [tgt['seeds']] + ([args.seeds] if args.seeds else []):
         if os.path.exists(path):
             want |= {e['address'] for e in json.load(open(path))
                      if cs <= e['address'] < ce and e['address'] not in byaddr}
@@ -269,8 +340,8 @@ def main():
 
     entry = info.image_base + info.entry_point_rva
     roots = [entry] + [int(x, 0) for x in args.roots.split(',') if x.strip()]
-    if args.virtual and os.path.exists(SEEDS):
-        roots += sorted(e['address'] for e in json.load(open(SEEDS)))
+    if args.virtual and os.path.exists(tgt['seeds']):
+        roots += sorted(e['address'] for e in json.load(open(tgt['seeds'])))
     if args.all:
         chosen = set(byaddr)
     else:
@@ -290,9 +361,8 @@ def main():
     # every 64-bit add and subtract. The Movies lost its menu video to it
     # (its docs/bringup.md); off by default in lift32 only because Fury3 leans
     # on the imprecision.
-    patches = sidebar_rows_patches(code, cs)
-    patches.update(HD_VOXEL_PATCHES)
-    print('[*] remaster patches: %d (sidebar rows capped at %d; HD voxels)' % (len(patches), SIDEBAR_ROWS_MAX))
+    patches = tgt['patches'](code, cs)
+    print('[*] remaster patches: %d' % len(patches))
     lifter = Lifter(iat_map=iat, lifted=set(byaddr), precise_carry=True, precise_sbb=True)
     os.makedirs(args.out, exist_ok=True)
     for fn in os.listdir(args.out):                 # a smaller lift must not leave stale chunks
@@ -318,9 +388,10 @@ def main():
     def lift_one(addr, name, end, reached):
         nonlocal errors
 
-        if addr in HOOKS:
-            chunk.append(('extern void ra2_hook_%08X(void);\nvoid %s(void) { ra2_hook_%08X(); }\n'
-                          % (addr, name, addr), addr, name))
+        if addr in tgt['hooks']:
+            hook = tgt['hooks'][addr]
+            chunk.append(('extern void ra2_hook_%s(void);\nvoid %s(void) { ra2_hook_%s(); }\n'
+                          % (hook, name, hook), addr, name))
             entries.append((addr, name))
             return
         try:
@@ -395,7 +466,8 @@ def main():
                 for fn in os.listdir(args.out))
     stats = {'lifted': len(chosen), 'stubs': len(stubs), 'errors': errors,
              'no_terminator': dirty, 'files': idx, 'lines': lines}
-    json.dump(stats, open(STATS, 'w'), indent=1)
+    json.dump(stats, open(tgt['stats'], 'w'), indent=1)
+    write_target_header(args.out, args.target, tgt)
     print('=' * 60)
     print('  lifted %d   not-lifted stubs %d   errors %d   no terminator %d'
           % (len(chosen), len(stubs), errors, dirty))

@@ -277,3 +277,31 @@ run on any unresolved `ICALL`: an unresolved indirect call returns 0 and the
 game carries on, so the suite passed 28/28 with every vehicle missing.
 
 ![Vehicles drawn](screenshots/skirmish-units.png)
+
+## 13. Red Alert 2 itself: the same host, a second target
+
+`game.exe`, in the same install, is Red Alert 2 without the expansion: the
+same engine a year younger, 23,192 functions. `run_lift.py --target game`
+lifts it into `src/recomp/gen_game` with its own seeds (a static constructor
+and a callback named only by an immediate), its own debug-log hook
+(0x004068F0) and its own patches, and writes `recomp_target.h` beside the
+lifted C: the exe and INI names, the window title and the debug-log
+address, the only things the host needs to know about which game it runs.
+`RA2_TARGET=game` in CMake builds it (`build-game\ra2.exe`). Everything else
+is found again by shape: the sidebar's row cap ([hires.md](hires.md)), the
+options object (0x00A40B18, width and height at +0x20) and all 19 HD-voxel
+sites and nine globals, with the same instructions and stack offsets but
+for the frame blitter's frame.
+
+Out of the box 27 of 30 cases passed. Every skirmish ended in the human's
+defeat about 16 seconds in, on the shipping code too, and the enemy had a
+full base and a charged nuclear missile by then. It looked like copy
+protection (`game.exe` still holds `COPYPROTECTION` strings), but its
+launcher check and CD check are already patched to return success. It was
+the speed: Red Alert 2's skirmish screen starts at the fastest game speed,
+which has no frame cap, and headless that is a few hundred game frames a
+second (`Frame 10954` 30 seconds in); the AI gets twelve minutes to the
+player's half. Its INI setting does not hold (the screen writes its own
+back), so the script moves the speed slider one notch down, as a player
+would, with `--select` (which now sets trackbars too).
+

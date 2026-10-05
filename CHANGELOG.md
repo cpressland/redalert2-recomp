@@ -6,6 +6,13 @@ versions follow [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Red Alert 2 itself (`game.exe`) as a second target: `run_lift.py --target
+  game`, CMake `RA2_TARGET=game`, `recomp_target.h` for what the host needs
+  to know about the binary; the sidebar fix, the options object and HD
+  vehicles found again by shape; the playtest suite and conformance with
+  `RA2_TARGET=game`.
+- `--select` sets a slider; `RA2_PROFILE=1` samples which lifted function
+  is running and prints the top 40 when the watchdog ends the run.
 - RA2 against RA2 over the LAN, scripted on both PCs (`tools/lan/`, the
   host's and the joiner's side), checked in the game's log and pictured from
   its own frames (docs/testing.md).
@@ -95,6 +102,9 @@ a2.ini`.
   script, to tell lift bugs from host bugs.
 
 ### Fixed
+- A press on a button inside a panel of a dialog was always sent a second
+  time by hand: the watcher only heard commands sent to the dialog itself.
+  It now hears the button's own parent, and the fallback goes there too.
 - A timer callback could run after its timer was killed (the callback waits
   for the machine, which the game gives up inside timeKillEvent); Tiberian
   Sun crashed on it under load. The host owns the multimedia timers and

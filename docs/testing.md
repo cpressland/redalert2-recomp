@@ -31,6 +31,20 @@ py -3 tools/playtest.py skirmish-loop --original
 | `campaign-*` | New Campaign, then the Allied or Soviet emblem | in game, and the player not defeated |
 | `lan-new` | Network, then New: the LAN host's setup screen | the screen opened, no fault |
 
+## Red Alert 2 (`game.exe`)
+
+The same cases run on Red Alert 2 itself with `RA2_TARGET=game` (its build
+in `build-game\`, its dialogs mapped from `game.exe`, results in
+`work\tests-game\`):
+
+```
+set RA2_TARGET=game
+py -3 tools/playtest.py --jobs 3
+```
+
+Its skirmishes start at the fastest speed, uncapped, so the script moves
+the speed slider one notch down before Start Game (bringup.md, section 13).
+
 ## How a script is written
 
 Buttons are named, not clicked by pixel. RA2's menus are Win32 dialog
@@ -54,7 +68,7 @@ which becomes host arguments:
 | Event | Meaning |
 |---|---|
 | `--press DLG:CTRL@s` | wait until dialog DLG is open, then click control CTRL |
-| `--select DLG:CTRL=N@s` | pick item N of a list or combo box in DLG |
+| `--select DLG:CTRL=N@s` | pick item N of a list or combo box in DLG, or set a slider to N |
 | `--waitlog TEXT@s` | hold the script until the game's debug log prints TEXT |
 | `--key [c][s][a]+vk@s`, `--move x,y@s`, `--click [c][s][a]+x,y@s`, `--wait VA@s` | as in civ3; a click can hold Ctrl, Shift, Alt (Ctrl+click is force-fire) |
 | `--drag x1,y1,x2,y2@s` | a band selection: button down at one corner, across, up at the other |

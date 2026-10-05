@@ -26,23 +26,27 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# RA2_TARGET=game: Red Alert 2 itself (game.exe), its build and its own baseline.
+GAME = os.environ.get('RA2_TARGET') == 'game'
 # RA2_EXE: another build of the host to test (a clang-cl build, an A/B variant).
-HOST = os.environ.get('RA2_EXE') or os.path.join(ROOT, 'build', 'ra2.exe')
-GEN = os.path.join(ROOT, 'src', 'recomp', 'gen')
-BASELINE = os.path.join(ROOT, 'conformance.json')
+HOST = os.environ.get('RA2_EXE') or os.path.join(ROOT, 'build-game' if GAME else 'build', 'ra2.exe')
+GEN = os.path.join(ROOT, 'src', 'recomp', 'gen_game' if GAME else 'gen')
+STATS = os.path.join(ROOT, 'work', *(['game'] if GAME else []), 'lift_stats.json')
+BASELINE = os.path.join(ROOT, 'conformance-game.json' if GAME else 'conformance.json')
 
 # (name, what the host prints when it is reached). Order is boot order.
 MILESTONES = [
     ('image mapped and imports bound', r'guest exe '),
-    ('entry point entered', r'entering 0x007CD80F'),
+    ('entry point entered', r'entering 0x00785AA0' if GAME else r'entering 0x007CD80F'),
     ('window created', r'\[headless\] CreateWindowExA\('),
     ('DirectDraw created', r'\[headless\] DirectDrawCreate -> 0x00000000'),
     ('primary surface created', r'primary -> 0x00000000'),
     ('first frame blitted', r'\[headless\] frame 1 blitted'),
     # Bink copies the intro straight into the primary; --record samples it.
     ('intro video plays (5+ distinct frames sampled)', None),
-    # Dialog 0xE2, after the four-minute intro: the menu's own movie starts.
-    ('main menu reached', r'\[game\] Looping movie'),
+    # Dialog 0xE2, after the intro: the menu's own movie starts (Red Alert 2
+    # logs no such line, so for it the menu's dialog opening).
+    ('main menu reached', r'\[dialog\] open 0xE2' if GAME else r'\[game\] Looping movie'),
 ]
 
 
@@ -67,7 +71,7 @@ def boot(seconds):
 
 
 def lift_health():
-    stats = json.load(open(os.path.join(ROOT, 'work', 'lift_stats.json')))
+    stats = json.load(open(STATS))
     disp = set(re.findall(r'\{ 0x([0-9A-F]{8})u,', open(os.path.join(GEN, 'recomp_dispatch.c')).read()))
     unresolved = sum(1 for fn in glob.glob(os.path.join(GEN, 'recomp_0*.c'))
                      for t in re.findall(r'L_([0-9A-F]{8}): RECOMP_ITAIL', open(fn).read())
@@ -109,7 +113,7 @@ def main():
                 worse.append('%s %d -> %d' % (k, base[k], now[k]))
     if args.update or not base:
         json.dump(now, open(BASELINE, 'w'), indent=1)
-        print('baseline written to conformance.json')
+        print('baseline written to ' + os.path.basename(BASELINE))
     if worse:
         print('REGRESSION: ' + '; '.join(worse))
         return 1

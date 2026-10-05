@@ -42,9 +42,13 @@ from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # RA2_EXE: another build of the host to test (a clang-cl build, an A/B variant).
-HOST = os.environ.get('RA2_EXE') or os.path.join(ROOT, 'build', 'ra2.exe')
-OUT = os.path.join(ROOT, 'work', 'tests')
-DIALOGS = os.path.join(ROOT, 'work', 'dialogs.json')
+# RA2_TARGET=game: Red Alert 2 (game.exe, built into build-game\); the default
+# is Yuri's Revenge (gamemd.exe, build\).
+TARGET = os.environ.get('RA2_TARGET', 'gamemd')
+GAME_EXE, GAME_INI = ('game.exe', 'RA2.INI') if TARGET == 'game' else ('gamemd.exe', 'RA2MD.INI')
+HOST = os.environ.get('RA2_EXE') or os.path.join(ROOT, 'build-game' if TARGET == 'game' else 'build', 'ra2.exe')
+OUT = os.path.join(ROOT, 'work', 'tests-game' if TARGET == 'game' else 'tests')
+DIALOGS = os.path.join(ROOT, 'work', 'game' if TARGET == 'game' else '', 'dialogs.json')
 
 # The menu screens, by the dialog resource the game builds them from
 # (py -3 tools/dialogs.py --show 0xE2 lists one).
@@ -59,7 +63,8 @@ def control(dlg, label):
     global _dialogs
     if _dialogs is None:
         if not os.path.exists(DIALOGS):
-            subprocess.run([sys.executable, os.path.join(ROOT, 'tools', 'dialogs.py')], check=True)
+            subprocess.run([sys.executable, os.path.join(ROOT, 'tools', 'dialogs.py'), '--exe',
+                            os.path.join(ROOT, 'game', GAME_EXE), '--out', DIALOGS], check=True)
         _dialogs = json.load(open(DIALOGS))
     for c in _dialogs['0x%X' % dlg]['controls']:
         if c['text'] == 'GUI:' + label:
@@ -76,6 +81,13 @@ class Script:
 
     def press(self, dlg, label, opens=None):
         """`label` is a GUI: caption, or a control ID for an uncaptioned one."""
+        if TARGET == 'game' and dlg == SKIRMISH and label == 'StartGame':
+            # Red Alert 2's skirmish starts at the fastest speed, uncapped: a few
+            # hundred frames a second headless, and the AI wins in seconds. Its
+            # INI setting does not hold (the dialog writes its own back), so
+            # set the slider as a player would: one notch down, Yuri's
+            # Revenge's GameSpeed=1.
+            self.select(SKIRMISH, 1321, 5)
         cid = label if isinstance(label, int) else control(dlg, label)
         self.args += ['--press', '0x%X:%d@%g' % (dlg, cid, self.t)]
         self.t += 1
@@ -291,7 +303,7 @@ def farm(d, ini=None):
         os.makedirs(out, exist_ok=True)
         for f in files:
             t = os.path.join(out, f)
-            if f.upper() == 'RA2MD.INI':
+            if f.upper() == GAME_INI:
                 if os.path.exists(t):
                     os.remove(t)
                 text = open(os.path.join(dirpath, f), 'rb').read()
@@ -313,7 +325,7 @@ def run(name, args, seconds, expect, every, original=False):
     game = farm(os.path.join(d, 'game'), expect.get('ini'))
     mp4, log = os.path.join(d, 'run.mp4'), os.path.join(d, 'run.log')
     cmd = [HOST, '--headless', '--run', '--mute', '--debuglog', '--watchdog', str(seconds),
-           '--record', mp4, '--exe', os.path.join(game, 'gamemd.exe'), '--game', game] + args
+           '--record', mp4, '--exe', os.path.join(game, GAME_EXE), '--game', game] + args
     cmd += os.environ.get('RA2_HOST_ARGS', '').replace('{case}', d).split()  # extra host flags; {case} is the case's folder
     if original:
         cmd.append('--original')
