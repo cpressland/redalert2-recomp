@@ -102,6 +102,8 @@ a2.ini`.
   script, to tell lift bugs from host bugs.
 
 ### Fixed
+- `--record` opened at the game's first mode, and a game that starts at 4K
+  was encoded at three frames a second; recordings are at most 1280 wide.
 - A press on a button inside a panel of a dialog was always sent a second
   time by hand: the watcher only heard commands sent to the dialog itself.
   It now hears the button's own parent, and the fallback goes there too.

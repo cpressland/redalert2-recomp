@@ -305,3 +305,10 @@ player's half. Its INI setting does not hold (the screen writes its own
 back), so the script moves the speed slider one notch down, as a player
 would, with `--select` (which now sets trackbars too).
 
+The last failure, 4K "picture stopped", was the recording. Red Alert 2
+starts in the INI's mode rather than at 800x600 menus, so the recorder
+opened its video at 3840x2160 and x264 encoded about three frames a second:
+617 frames in three minutes against Yuri's Revenge's 4,946, which looked
+like a game slowing with resolution. The game itself kept time; the
+recording is now at most 1280 wide, and the suite is 30 of 30.
+
