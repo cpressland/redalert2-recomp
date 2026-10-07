@@ -33,6 +33,8 @@
 
 int host_frame(uint32_t* out, int maxw, int maxh, int* w, int* h);   /* host.c */
 int host_frame_hd(uint32_t* out, int maxw, int maxh, int* w, int* h);   /* host.c: 2x, HD voxels */
+HCURSOR host_menu_cursor(void);   /* host.c: the game's cursor, NULL while it draws its own */
+HWND host_game_focus(void);       /* host.c: under Wine, the window the game gave the focus */
 
 static const char* const k_mode_names[] = { "sharp", "smooth", "crt", "nearest", "integer" };
 #define NMODES 5
@@ -106,6 +108,8 @@ static RECT g_dst;                       /* where it is drawn in the client area
 static int g_fullscreen;
 static RECT g_windowed;                  /* the window's rect before fullscreen */
 static HWND g_capture_target;            /* the game window a held button went to */
+static HWND g_present_hwnd;              /* this window, for present_real_mouse */
+#define WM_REAL_MOUSE (WM_APP + 0x10)    /* + (message - WM_MOUSEFIRST): lParam is a screen point */
 static POINT g_capture_off;              /* game point -> that window's client */
 
 /* ---- Direct3D 11 --------------------------------------------------------- */
@@ -333,7 +337,7 @@ static void forward_mouse(UINT m, WPARAM w, int x, int y) {
         g_capture_target = t;
         g_capture_off.x = gp.x - local.x, g_capture_off.y = gp.y - local.y;
     }
-    PostMessageA(t, m, w, MAKELPARAM(local.x, local.y));
+    input_post_mouse(t, m, w, MAKELPARAM(local.x, local.y));
     if (m == WM_LBUTTONDOWN || m == WM_RBUTTONDOWN) {
         char cls[32] = "";
         GetClassNameA(t, cls, sizeof cls);
@@ -350,7 +354,9 @@ static void forward_mouse(UINT m, WPARAM w, int x, int y) {
 static void forward_key(UINT m, WPARAM w, LPARAM l) {
     GUITHREADINFO gti = { sizeof gti };
     HWND t = g_input_hwnd;
-    if (GetGUIThreadInfo(GetWindowThreadProcessId(g_input_hwnd, NULL), &gti) && gti.hwndFocus)
+    if (host_game_focus())                         /* under Wine, where the game asked for it */
+        t = host_game_focus();
+    else if (GetGUIThreadInfo(GetWindowThreadProcessId(g_input_hwnd, NULL), &gti) && gti.hwndFocus)
         t = gti.hwndFocus;
     if (t) PostMessageA(t, m, w, l);
 }
@@ -471,6 +477,22 @@ static DWORD WINAPI quit_soon(LPVOID unused) {
     return 0;
 }
 
+/* Who shows the cursor changes when the game captures or releases the mouse
+ * (a battle starts or ends), without the mouse moving: WM_SETCURSOR alone
+ * would leave the menus' arrow over the battlefield, beside the game's own,
+ * until the player moved. */
+static void update_cursor(HWND hw) {
+    static HCURSOR was = (HCURSOR)-1;
+    HCURSOR c = host_menu_cursor();
+    POINT p;
+    if (c == was) return;
+    fprintf(stderr, "[present] cursor: %s\n", c ? "the game's Windows cursor (menus)" : "drawn by the game");
+    was = c;
+    if (GetCursorPos(&p) && WindowFromPoint(p) == hw &&
+        SendMessageA(hw, WM_NCHITTEST, 0, MAKELPARAM(p.x, p.y)) == HTCLIENT)
+        SetCursor(c);
+}
+
 static LRESULT CALLBACK wndproc(HWND hw, UINT m, WPARAM w, LPARAM l) {
     switch (m) {
     case WM_MOUSEMOVE: case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
@@ -495,8 +517,19 @@ static LRESULT CALLBACK wndproc(HWND hw, UINT m, WPARAM w, LPARAM l) {
     case WM_MOUSEWHEEL:
         forward_key(m, w, l);
         return 0;
+    case WM_REAL_MOUSE + (WM_MOUSEMOVE - WM_MOUSEFIRST): case WM_REAL_MOUSE + (WM_LBUTTONDOWN - WM_MOUSEFIRST):
+    case WM_REAL_MOUSE + (WM_LBUTTONUP - WM_MOUSEFIRST): case WM_REAL_MOUSE + (WM_LBUTTONDBLCLK - WM_MOUSEFIRST):
+    case WM_REAL_MOUSE + (WM_RBUTTONDOWN - WM_MOUSEFIRST): case WM_REAL_MOUSE + (WM_RBUTTONUP - WM_MOUSEFIRST):
+    case WM_REAL_MOUSE + (WM_RBUTTONDBLCLK - WM_MOUSEFIRST): case WM_REAL_MOUSE + (WM_MBUTTONDOWN - WM_MOUSEFIRST):
+    case WM_REAL_MOUSE + (WM_MBUTTONUP - WM_MOUSEFIRST): {
+        POINT p = { GET_X_LPARAM(l), GET_Y_LPARAM(l) };   /* present_real_mouse: a screen point */
+        ScreenToClient(hw, &p);
+        return wndproc(hw, WM_MOUSEFIRST + (m - WM_REAL_MOUSE), w, MAKELPARAM(p.x, p.y));
+    }
     case WM_SETCURSOR:
-        if (LOWORD(l) == HTCLIENT) { SetCursor(NULL); return TRUE; }   /* the game draws its own */
+        /* In a battle the game draws its own; in the menus, the Windows
+         * cursor it set (update_cursor). */
+        if (LOWORD(l) == HTCLIENT) { SetCursor(host_menu_cursor()); return TRUE; }
         break;
     case WM_SYSKEYDOWN:
         if (w == VK_RETURN) { set_fullscreen(hw, !g_fullscreen); settings_save(hw); return 0; }
@@ -569,6 +602,7 @@ static DWORD WINAPI present_thread(LPVOID arg) {
     }
     HWND hw = CreateWindowExA(0, "RA2Presenter", RA2_TITLE " (recomp)", WS_OVERLAPPEDWINDOW,
                               wx, wy, ww, wh, NULL, NULL, wc.hInstance, NULL);
+    g_present_hwnd = hw;
     if (!hw || !d3d_init(hw)) {
         fprintf(stderr, "[present] could not start; run with --classic for the original display\n");
         ExitProcess(5);
@@ -586,6 +620,7 @@ static DWORD WINAPI present_thread(LPVOID arg) {
             TranslateMessage(&msg);
             DispatchMessageA(&msg);
         }
+        update_cursor(hw);
         if (host_frame_hd(frame, 4096, 2160, &gw, &gh)) {     /* the picture at 2x */
             InterlockedExchange(&g_gw, gw);
             InterlockedExchange(&g_gh, gh);
@@ -598,6 +633,10 @@ static DWORD WINAPI present_thread(LPVOID arg) {
             Sleep(16);
         }
     }
+}
+
+void present_real_mouse(UINT m, WPARAM w, POINT screen) {
+    if (g_present_hwnd) PostMessageA(g_present_hwnd, WM_REAL_MOUSE + (m - WM_MOUSEFIRST), w, MAKELPARAM(screen.x, screen.y));
 }
 
 int present_mode_from_name(const char* name) {

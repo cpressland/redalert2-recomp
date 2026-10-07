@@ -74,8 +74,86 @@ static void shim_MessageBoxA(void) {
  * it, and nothing appears on the screen or takes over an RDP session. */
 #define HL_EXSTYLE (WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
 
+/* Under Wine (CrossOver on a Mac) WS_EX_NOACTIVATE is not enough. A Button
+ * the presenter clicks calls SetFocus, Wine activates its invisible top-level
+ * window, and the Mac makes that the key window: the presenter went inactive
+ * (the Mac's own cursor came back), the button's SetCapture took the real
+ * mouse, and the button-up arrived at its real place on the screen, outside
+ * it, so no click ever completed. Windows never moves the foreground for a
+ * background thread's SetFocus. So under Wine, with the presenter, a CBT hook
+ * on the game's thread refuses that activation, and remembers where the game
+ * asked for the focus: that is where the presenter sends keys
+ * (host_game_focus). */
+static HHOOK g_cbt;
+static volatile HWND g_game_focus;
+
+static LRESULT CALLBACK cbt_hook(int code, WPARAM w, LPARAM l) {
+    if (code == HCBT_SETFOCUS) g_game_focus = (HWND)w;
+    else if (code == HCBT_ACTIVATE) return 1;      /* refused: the presenter stays in front */
+    return CallNextHookEx(g_cbt, code, w, l);
+}
+
+/* And the mouse. A Button takes the capture on the press the presenter
+ * forwards, and Wine then sends the real mouse to it, in coordinates of its
+ * real place on the screen: the button-up came at 603,166 to a 150x40
+ * button, so the press was cancelled, and the presenter never saw the
+ * release. On the game's thread, a mouse message nobody in the host posted
+ * (input_post_mouse) is the real mouse: it is dropped here and handed to the
+ * presenter at its screen point, which forwards it like any other. */
+static LRESULT CALLBACK wine_mouse_hook(int code, WPARAM w, LPARAM l) {
+    MSG* m = (MSG*)l;
+    if (code == HC_ACTION && m->message >= WM_MOUSEFIRST && m->message <= WM_MOUSELAST &&
+        m->message != WM_MOUSEWHEEL) {
+        if (w == PM_REMOVE && !input_posted_mouse(m->hwnd, m->message, m->lParam)) {
+            present_real_mouse(m->message, m->wParam, m->pt);
+            m->message = WM_NULL;
+        } else if (w != PM_REMOVE && !input_posted_mouse_peek(m->hwnd, m->message, m->lParam)) {
+            m->message = WM_NULL;                  /* a peek at it sees nothing either */
+        }
+    }
+    return CallNextHookEx(NULL, code, w, l);
+}
+
+static int under_wine(void) {
+    return GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_version") != NULL;
+}
+
+/* The game window keys go to: where it last asked for the focus under Wine,
+ * else NULL (ask Windows). */
+HWND host_game_focus(void) {
+    HWND f = g_game_focus;
+    return f && IsWindow(f) && IsWindowVisible(f) ? f : NULL;
+}
+
+/* The game also brings its window forward itself. Under Wine that moved the
+ * foreground to the game's thread before the hook could refuse the
+ * activation: then nothing was in front, and the button's capture had the
+ * real mouse after all. So there these are answered without the call: the
+ * game believes its window is in front, as the focus queries already say. */
+static void shim_SetForegroundWindow(void) {
+    g_eax = g_cbt ? TRUE : (uint32_t)SetForegroundWindow((HWND)(uintptr_t)ARG(0));
+    g_esp += 4 + 1 * 4;
+}
+
+static void shim_BringWindowToTop(void) {
+    g_eax = g_cbt ? TRUE : (uint32_t)BringWindowToTop((HWND)(uintptr_t)ARG(0));
+    g_esp += 4 + 1 * 4;
+}
+
+static void shim_SetActiveWindow(void) {
+    g_eax = g_cbt ? (uint32_t)(uintptr_t)g_game_hwnd
+                  : (uint32_t)(uintptr_t)SetActiveWindow((HWND)(uintptr_t)ARG(0));
+    g_esp += 4 + 1 * 4;
+}
+
 static void shim_CreateWindowExA(void) {
     uint32_t style = ARG(3);
+    if (!g_cbt && !g_headless && !g_classic && under_wine()) {
+        g_cbt = SetWindowsHookExA(WH_CBT, cbt_hook, NULL, GetCurrentThreadId());
+        SetWindowsHookExA(WH_GETMESSAGE, wine_mouse_hook, NULL, GetCurrentThreadId());
+        fprintf(stderr, "[headless] under Wine: game windows are never activated (CBT hook %s)\n",
+                g_cbt ? "on" : "FAILED");
+    }
     HWND parent = (HWND)(uintptr_t)ARG(8);
     int top = !parent || !(style & WS_CHILD);
     HWND h = CreateWindowExA(ARG(0) | (top ? HL_EXSTYLE : 0), (LPCSTR)(uintptr_t)ARG(1),
@@ -174,6 +252,34 @@ static void shim_SetCursorPos(void) {
     input_live_cursor((int)ARG(0), (int)ARG(1));
     g_eax = TRUE;
     g_esp += 4 + 2 * 4;
+}
+
+/* The cursor. The menus are Win32 dialogs and use the Windows cursor: the
+ * game loads its own arrow (resource 0x68) and sets it. In a battle the mouse
+ * is captured (Capture_Mouse, its +0x10 byte) and the game draws the cursor
+ * into the picture itself. The presenter hides the real cursor over the
+ * picture, so while the mouse is not captured it shows the one the game set,
+ * and the menus had no cursor at all without it. */
+#ifdef RA2_TARGET_GAME
+#define RA2_MOUSE_VA 0x00B2AF5Cu   /* the mouse object (WWMouseClass), set by its constructor */
+#else
+#define RA2_MOUSE_VA 0x00B78164u
+#endif
+static HCURSOR g_game_cursor;
+
+static void shim_SetCursor(void) {
+    HCURSOR c = (HCURSOR)(uintptr_t)ARG(0);
+    if (c) g_game_cursor = c;
+    g_eax = (uint32_t)(uintptr_t)SetCursor(c);
+    g_esp += 4 + 1 * 4;
+}
+
+/* The cursor the presenter shows over the picture: NULL while the game draws
+ * its own. */
+HCURSOR host_menu_cursor(void) {
+    uint32_t mouse = MEM32(RA2_MOUSE_VA);
+    if (mouse && MEM8(mouse + 0x10)) return NULL;
+    return g_game_cursor ? g_game_cursor : LoadCursor(NULL, IDC_ARROW);
 }
 
 /* ...and the screen it reports is the mode's, as it would be after a real
@@ -856,6 +962,10 @@ static native32_shim_t g_headless_shims[] = {
     { "MoveWindow", shim_MoveWindow },
     { "SetWindowPos", shim_SetWindowPos },
     { "SetCursorPos", shim_SetCursorPos },
+    { "SetCursor", shim_SetCursor },
+    { "SetForegroundWindow", shim_SetForegroundWindow },
+    { "BringWindowToTop", shim_BringWindowToTop },
+    { "SetActiveWindow", shim_SetActiveWindow },
     { "GetSystemMetrics", shim_GetSystemMetrics },
     { "DirectDrawCreate", shim_DirectDrawCreate },
 };
