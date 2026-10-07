@@ -35,6 +35,7 @@ int host_frame(uint32_t* out, int maxw, int maxh, int* w, int* h);   /* host.c *
 int host_frame_hd(uint32_t* out, int maxw, int maxh, int* w, int* h);   /* host.c: 2x, HD voxels */
 HCURSOR host_menu_cursor(void);   /* host.c: the game's cursor, NULL while it draws its own */
 HWND host_game_focus(void);       /* host.c: under Wine, the window the game gave the focus */
+long host_frame_count(void);      /* host.c: blits into the primary so far */
 
 static const char* const k_mode_names[] = { "sharp", "smooth", "crt", "nearest", "integer" };
 #define NMODES 5
@@ -559,6 +560,27 @@ static LRESULT CALLBACK wndproc(HWND hw, UINT m, WPARAM w, LPARAM l) {
     return DefWindowProcA(hw, m, w, l);
 }
 
+/* RA2_FRAME_STATS=1: every 2 s, how many pictures the presenter showed, what
+ * the copy out of the primary and the draw (upload, shader, Present) took,
+ * and how many frames the game itself ran, so a slow picture says whether
+ * the game or the presenter is slow. */
+static void frame_stats(LARGE_INTEGER t0, LARGE_INTEGER t1, LARGE_INTEGER t2) {
+    static int on = -1, n;
+    static LARGE_INTEGER hz, start;
+    static long long copy, drawn;
+    static uint32_t game0;
+    if (on < 0) on = getenv("RA2_FRAME_STATS") != NULL, QueryPerformanceFrequency(&hz), start = t0;
+    if (!on) return;
+    uint32_t game = *(volatile uint32_t*)(uintptr_t)RA2_GAME_FRAME_VA;
+    copy += t1.QuadPart - t0.QuadPart, drawn += t2.QuadPart - t1.QuadPart, n++;
+    if (t2.QuadPart - start.QuadPart < 2 * hz.QuadPart) return;
+    double s = (double)(t2.QuadPart - start.QuadPart) / hz.QuadPart;
+    fprintf(stderr, "[present] %.1f pictures/s (copy %.1f ms, draw %.1f ms), game %.1f frames/s\n", n / s,
+            1000.0 * copy / hz.QuadPart / n, 1000.0 * drawn / hz.QuadPart / n, (game - game0) / s);
+    game0 = game, start = t2, copy = drawn = 0, n = 0;
+}
+
+
 static DWORD WINAPI present_thread(LPVOID arg) {
     static uint32_t frame[4096 * 2160];
     int fullscreen = (int)(intptr_t)arg;
@@ -621,14 +643,38 @@ static DWORD WINAPI present_thread(LPVOID arg) {
             DispatchMessageA(&msg);
         }
         update_cursor(hw);
+        /* The copy holds the primary's lock (4.6 ms at 1352x845 on a Mac), and
+         * the game waits on that lock to draw: copying as fast as the loop ran
+         * (97 a second, where vsync did not hold it back) kept the game at half
+         * its speed. So a copy is made when the game has blitted a new frame,
+         * and at least every 33 ms besides, for what Bink writes straight into
+         * the primary (movies). */
+        {
+            static long seen = -1;
+            static DWORD last;
+            long n = host_frame_count();
+            DWORD since = GetTickCount() - last;
+            /* a battle copies into its frame surface more than once a frame:
+             * at most one picture per 16 ms, a display's refresh */
+            if ((n == seen && since < 33) || since < 16) { Sleep(1); continue; }
+            seen = n, last = GetTickCount();
+        }
+        LARGE_INTEGER t0, t1, t2;
+        QueryPerformanceCounter(&t0);
         if (host_frame_hd(frame, 4096, 2160, &gw, &gh)) {     /* the picture at 2x */
             InterlockedExchange(&g_gw, gw);
             InterlockedExchange(&g_gh, gh);
+            QueryPerformanceCounter(&t1);
             draw(frame, 2 * gw, 2 * gh);
+            QueryPerformanceCounter(&t2);
+            frame_stats(t0, t1, t2);
         } else if (host_frame(frame, 4096, 2160, &gw, &gh)) {
             InterlockedExchange(&g_gw, gw);
             InterlockedExchange(&g_gh, gh);
+            QueryPerformanceCounter(&t1);
             draw(frame, gw, gh);
+            QueryPerformanceCounter(&t2);
+            frame_stats(t0, t1, t2);
         } else {
             Sleep(16);
         }

@@ -286,7 +286,8 @@ presenter, not with `--classic`.
 
 Environment: `RA2_EXE` (another build to test: the playtest runner and the
 conformance harness use it in place of `build\ra2.exe`), `RA2_HOST_ARGS` (extra host flags for every playtest case),
-`RA2_FRAME_STATS=1` (time between frames), `RA2_HD_VOXEL_ANIMS=1` (HD voxel
+`RA2_FRAME_STATS=1` (time between frames; with the presenter, pictures and
+game frames a second every 2 s), `RA2_HD_VOXEL_ANIMS=1` (HD voxel
 debris, opt-in).
 
 Diagnostics: `--debuglog` (the game's own debug log), `--native-trace`

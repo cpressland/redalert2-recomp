@@ -208,6 +208,22 @@ static void shim_GetWindowRect(void) {
     g_esp += 4 + 2 * 4;
 }
 
+/* SendMessage answers in screen coordinates too, where a message does: the
+ * dialogs lay a combo box out by its CB_GETDROPPEDCONTROLRECT (0x00775BC0).
+ * On a Mac the game's main window cannot sit at the top of the screen (the
+ * menu bar), so its client corner was 33 pixels down and every combo box
+ * moved down by that much: the skirmish screen's Side, Color, Start and Team
+ * boxes sat a row below their players. */
+static void shim_SendMessageA(void) {
+    UINT m = ARG(1);
+    g_eax = (uint32_t)SendMessageA((HWND)(uintptr_t)ARG(0), m, (WPARAM)ARG(2), (LPARAM)ARG(3));
+    if (m == CB_GETDROPPEDCONTROLRECT && ARG(3)) {
+        POINT o = vorigin();
+        OffsetRect((RECT*)(uintptr_t)ARG(3), -o.x, -o.y);
+    }
+    g_esp += 4 + 4 * 4;
+}
+
 static void shim_WindowFromPoint(void) {
     POINT o = vorigin(), p = { (LONG)ARG(0) + o.x, (LONG)ARG(1) + o.y };
     g_eax = (uint32_t)(uintptr_t)WindowFromPoint(p);
@@ -500,6 +516,14 @@ static HRESULT WINAPI hl_Blt(IDirectDrawSurface* dst, LPRECT r, IDirectDrawSurfa
     return g_real_blt(dst, r, src, sr, flags, fx);
 }
 
+/* For the presenter: copy the primary when the game has put a new frame in
+ * it, not every time it could. The menus blit into the primary; a battle
+ * copies into its frame surface (hdvox.c). */
+long host_frame_count(void) {
+    extern volatile LONG ra2_frame_copies;
+    return g_frames + ra2_frame_copies;
+}
+
 static void count_frame(void) {
     LONG n = InterlockedIncrement(&g_frames);
     if (n == 1 || n == 10 || n == 100 || n % 1000 == 0)
@@ -624,11 +648,16 @@ static void record_close(void) {
     LeaveCriticalSection(&g_rec_lock);
 }
 
-/* The game's picture: the primary, converted to 32-bit BGRX into `out`
- * (stride *w), at most maxw x maxh. 0 when there is no primary yet. Shared by
- * the recorder and the presenter (present.c). The copy is made under the lock
- * and converted straight out of the locked surface: 800x600 is 2 ms. */
-int host_frame(uint32_t* out, int maxw, int maxh, int* pw, int* ph) {
+/* The primary's pixels, copied out under its lock. The game waits on that
+ * lock to draw, and converting (or composing HD voxels) inside it took 4.6 ms
+ * a picture at 1352x845 on a Mac: the presenter kept the game at 40 frames a
+ * second. The lock is now held for a memcpy, and the work runs on the copy.
+ * One snapshot at a time (the presenter and the recorder share it). */
+static uint8_t g_snap[4096 * 2160 * 4];
+static CRITICAL_SECTION g_snap_lock;
+
+/* With g_snap_lock held: the primary into g_snap, rows of *pitch bytes. */
+static int snapshot(int* w, int* h, int* bpp, int* pitch) {
     DDSURFACEDESC d;
     EnterCriticalSection(&g_primary_lock);
     if (!g_primary) { LeaveCriticalSection(&g_primary_lock); return 0; }
@@ -638,10 +667,26 @@ int host_frame(uint32_t* out, int maxw, int maxh, int* pw, int* ph) {
         LeaveCriticalSection(&g_primary_lock);
         return 0;
     }
-    int w = (int)d.dwWidth < maxw ? (int)d.dwWidth : maxw, h = (int)d.dwHeight < maxh ? (int)d.dwHeight : maxh;
-    int bpp = (int)d.ddpfPixelFormat.dwRGBBitCount;
+    *w = (int)d.dwWidth, *h = (int)d.dwHeight, *bpp = (int)d.ddpfPixelFormat.dwRGBBitCount;
+    *pitch = *w * (*bpp / 8);
+    int ok = *w <= 4096 && *h <= 2160 && (*bpp == 16 || *bpp == 32);
+    for (int y = 0; ok && y < *h; y++)
+        memcpy(g_snap + (size_t)y * *pitch, (const uint8_t*)d.lpSurface + (size_t)y * d.lPitch, (size_t)*pitch);
+    g_primary->lpVtbl->Unlock(g_primary, NULL);
+    LeaveCriticalSection(&g_primary_lock);
+    return ok;
+}
+
+/* The game's picture: the primary, converted to 32-bit BGRX into `out`
+ * (stride *w), at most maxw x maxh. 0 when there is no primary yet. Shared by
+ * the recorder and the presenter (present.c). */
+int host_frame(uint32_t* out, int maxw, int maxh, int* pw, int* ph) {
+    int sw, sh, bpp, pitch;
+    EnterCriticalSection(&g_snap_lock);
+    if (!snapshot(&sw, &sh, &bpp, &pitch)) { LeaveCriticalSection(&g_snap_lock); return 0; }
+    int w = sw < maxw ? sw : maxw, h = sh < maxh ? sh : maxh;
     for (int y = 0; y < h; y++) {
-        const uint8_t* src = (const uint8_t*)d.lpSurface + y * d.lPitch;
+        const uint8_t* src = g_snap + (size_t)y * pitch;
         uint32_t* row = out + y * w;
         if (bpp == 16) {
             for (int x = 0; x < w; x++) {
@@ -651,8 +696,7 @@ int host_frame(uint32_t* out, int maxw, int maxh, int* pw, int* ph) {
             }
         } else memcpy(row, src, (size_t)w * 4);
     }
-    g_primary->lpVtbl->Unlock(g_primary, NULL);
-    LeaveCriticalSection(&g_primary_lock);
+    LeaveCriticalSection(&g_snap_lock);
     *pw = w;
     *ph = h;
     return 1;
@@ -662,21 +706,13 @@ int host_frame(uint32_t* out, int maxw, int maxh, int* pw, int* ph) {
  * voxels are off, the frame is not 16-bit, or 2x would not fit. *pw, *ph get
  * the game's (1x) size. */
 int host_frame_hd(uint32_t* out, int maxw, int maxh, int* pw, int* ph) {
-    DDSURFACEDESC d;
+    int w, h, bpp, pitch;
     if (!ra2_vox_hd_on) return 0;
-    EnterCriticalSection(&g_primary_lock);
-    if (!g_primary) { LeaveCriticalSection(&g_primary_lock); return 0; }
-    memset(&d, 0, sizeof d);
-    d.dwSize = sizeof d;
-    if (g_primary->lpVtbl->Lock(g_primary, NULL, &d, DDLOCK_WAIT | DDLOCK_READONLY, NULL) != DD_OK) {
-        LeaveCriticalSection(&g_primary_lock);
-        return 0;
-    }
-    int w = (int)d.dwWidth, h = (int)d.dwHeight;
-    int ok = d.ddpfPixelFormat.dwRGBBitCount == 16 && 2 * w <= maxw && 2 * h <= maxh;
-    if (ok) hdvox_compose((const uint8_t*)d.lpSurface, (int)d.lPitch, w, h, out);
-    g_primary->lpVtbl->Unlock(g_primary, NULL);
-    LeaveCriticalSection(&g_primary_lock);
+    EnterCriticalSection(&g_snap_lock);
+    if (!snapshot(&w, &h, &bpp, &pitch)) { LeaveCriticalSection(&g_snap_lock); return 0; }
+    int ok = bpp == 16 && 2 * w <= maxw && 2 * h <= maxh;
+    if (ok) hdvox_compose(g_snap, pitch, w, h, out);
+    LeaveCriticalSection(&g_snap_lock);
     *pw = w;
     *ph = h;
     return ok;
@@ -958,6 +994,7 @@ static native32_shim_t g_headless_shims[] = {
     { "ClientToScreen", shim_ClientToScreen },
     { "ScreenToClient", shim_ScreenToClient },
     { "GetWindowRect", shim_GetWindowRect },
+    { "SendMessageA", shim_SendMessageA },
     { "WindowFromPoint", shim_WindowFromPoint },
     { "MoveWindow", shim_MoveWindow },
     { "SetWindowPos", shim_SetWindowPos },
@@ -1224,6 +1261,7 @@ int main(int argc, char** argv) {
     }
 
     InitializeCriticalSection(&g_primary_lock);
+    InitializeCriticalSection(&g_snap_lock);
     InitializeCriticalSection(&g_rec_lock);
     /* Headless and the presenter share the virtual display. The presenter
      * keeps the game's message boxes real (a player answers them) and its
