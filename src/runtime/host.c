@@ -118,6 +118,8 @@ static int under_wine(void) {
     return GetProcAddress(GetModuleHandleA("ntdll.dll"), "wine_get_version") != NULL;
 }
 
+int host_under_wine(void) { return under_wine(); }   /* present.c */
+
 /* The game window keys go to: where it last asked for the focus under Wine,
  * else NULL (ask Windows). */
 HWND host_game_focus(void) {

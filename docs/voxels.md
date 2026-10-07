@@ -161,3 +161,26 @@ tanks) produced one. A verified trigger is the next step.
 
 **Not yet:** the units drawn by `0x0073C5F0` (copied at `0x0073CDE9`), and
 a unit cut off at the edge of the staging surface stay 1x.
+
+## Under Wine: off by default
+
+On a Mac (CrossOver, Apple Silicon) HD vehicles start switched off, and the
+F10 menu turns them on (`present.c`, `hdvox_key`: the setting is kept as
+`hdvoxels_wine` in `build\ra2.ini`, so Windows keeps its own default). Two
+reasons, neither investigated yet:
+
+- **They cost frames there.** A skirmish at 1352x845 ran at 62.5 game frames
+  a second without them and 42 to 48 with them (`RA2_FRAME_STATS=1`), where
+  on Windows they cost nothing measurable. The presenter's composition
+  (`hdvox_compose`) took 4.8 ms a picture against 0.8 ms for a plain copy,
+  and the game's own thread does four finish-stage passes per unit; under
+  Rosetta both cost more than on an x86 PC. Which of the two is the
+  bottleneck, and how much of it is the publish lock the game thread and the
+  presenter share, is the first thing to measure.
+- **A player saw graphical artifacts** with them on, which are not yet
+  characterised (what is drawn wrong, and on which units). The `--original`
+  oracle and `--hd-voxels-dump` frames on Windows and under Wine, compared,
+  would say whether it is the composition, the recording, or something Wine
+  does differently.
+
+When both are understood and fixed, the default can go back to on under Wine.

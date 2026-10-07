@@ -251,6 +251,10 @@ that CnCNet has updated may no longer have it, and then the game cannot create
 its IPX socket (10047). One Red Alert 2 `skirmish-loop` run hung once in
 `Theme::Stop` after the defeat and passed when run again.
 
+HD vehicles are off by default under Wine: there they cost about a quarter of
+the frame rate and a player saw artifacts with them. F10 still turns them on;
+[docs/voxels.md](docs/voxels.md) has what is known and what to look at.
+
 Not yet under Wine: recordings (`--record` starts `ffmpeg` inside the bottle,
 where there is none; the frame checksums the tests count still come out), and
 `--original` is untested.

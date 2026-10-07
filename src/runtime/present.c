@@ -36,6 +36,7 @@ int host_frame_hd(uint32_t* out, int maxw, int maxh, int* w, int* h);   /* host.
 HCURSOR host_menu_cursor(void);   /* host.c: the game's cursor, NULL while it draws its own */
 HWND host_game_focus(void);       /* host.c: under Wine, the window the game gave the focus */
 long host_frame_count(void);      /* host.c: blits into the primary so far */
+int  host_under_wine(void);       /* host.c */
 
 static const char* const k_mode_names[] = { "sharp", "smooth", "crt", "nearest", "integer" };
 #define NMODES 5
@@ -392,12 +393,22 @@ static void settings_path(void) {
     strcpy_s(slash ? slash + 1 : g_ini, MAX_PATH - (slash ? (slash + 1 - g_ini) : 0), "ra2.ini");
 }
 
+/* HD vehicles are off by default under Wine (CrossOver on a Mac): there they
+ * cost about a quarter of the frame rate (62.5 frames a second without, 47
+ * with, a skirmish at 1352x845) and drew artifacts (docs/voxels.md). Their
+ * setting there is a key of its own, so a ra2.ini that a run before this
+ * saved with hdvoxels=1 does not turn them back on, and Windows keeps its
+ * default. */
+static const char* hdvox_key(void) {
+    return host_under_wine() ? "hdvoxels_wine" : "hdvoxels";
+}
+
 static void settings_save(HWND hw) {
     char v[64];
     WritePrivateProfileStringA("present", "scale", k_mode_names[g_mode], g_ini);
     WritePrivateProfileStringA("present", "bars", g_bars ? "blur" : "black", g_ini);
     WritePrivateProfileStringA("present", "fullscreen", g_fullscreen ? "1" : "0", g_ini);
-    WritePrivateProfileStringA("present", "hdvoxels", ra2_vox_hd_on ? "1" : "0", g_ini);
+    WritePrivateProfileStringA("present", hdvox_key(), ra2_vox_hd_on ? "1" : "0", g_ini);
     if (hw && !g_fullscreen && !IsIconic(hw)) {
         RECT r;
         GetWindowRect(hw, &r);
@@ -575,8 +586,9 @@ static void frame_stats(LARGE_INTEGER t0, LARGE_INTEGER t1, LARGE_INTEGER t2) {
     copy += t1.QuadPart - t0.QuadPart, drawn += t2.QuadPart - t1.QuadPart, n++;
     if (t2.QuadPart - start.QuadPart < 2 * hz.QuadPart) return;
     double s = (double)(t2.QuadPart - start.QuadPart) / hz.QuadPart;
+    /* the game's count starts again with each game: none counted across that */
     fprintf(stderr, "[present] %.1f pictures/s (copy %.1f ms, draw %.1f ms), game %.1f frames/s\n", n / s,
-            1000.0 * copy / hz.QuadPart / n, 1000.0 * drawn / hz.QuadPart / n, (game - game0) / s);
+            1000.0 * copy / hz.QuadPart / n, 1000.0 * drawn / hz.QuadPart / n, game >= game0 ? (game - game0) / s : 0.0);
     game0 = game, start = t2, copy = drawn = 0, n = 0;
 }
 
@@ -700,7 +712,8 @@ void present_start(int mode, int fullscreen) {
     GetPrivateProfileStringA("present", "bars", "blur", v, sizeof v, g_ini);
     g_bars = _stricmp(v, "black") != 0;
     if (fullscreen < 0) fullscreen = GetPrivateProfileIntA("present", "fullscreen", 0, g_ini);
-    if (!ra2_vox_hd_on) ra2_vox_hd_on = GetPrivateProfileIntA("present", "hdvoxels", 1, g_ini);   /* --hd-voxels forces it */
+    if (!ra2_vox_hd_on)                     /* --hd-voxels forces it */
+        ra2_vox_hd_on = GetPrivateProfileIntA("present", hdvox_key(), !host_under_wine(), g_ini);
     if (mode >= 0) g_mode = mode;
     input_live(1);
     CloseHandle(CreateThread(NULL, 0, present_thread, (LPVOID)(intptr_t)fullscreen, 0, NULL));
