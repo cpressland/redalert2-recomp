@@ -6,6 +6,10 @@ versions follow [SemVer](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Setup.cmd builds both games: Yuri's Revenge, then Red Alert 2, each with
+  its own shortcut (`Yuri's Revenge (recomp).cmd`, `Red Alert 2
+  (recomp).cmd`); `-Games yr` or `-Games ra2` builds one. `Red Alert 2
+  (recomp).cmd` used to start Yuri's Revenge; it now starts Red Alert 2.
 - Red Alert 2 itself (`game.exe`) as a second target: `run_lift.py --target
   game`, CMake `RA2_TARGET=game`, `recomp_target.h` for what the host needs
   to know about the binary; the sidebar fix, the options object and HD

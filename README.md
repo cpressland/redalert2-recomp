@@ -1,8 +1,10 @@
-# Red Alert 2: Yuri's Revenge — Static Recompilation
+# Red Alert 2 and Yuri's Revenge — Static Recompilation
 
-Static recompilation of **Command & Conquer: Red Alert 2 — Yuri's Revenge**
-(Westwood Studios, 2001) from its shipping Win32 binary, `gamemd.exe` 1.001,
-to native C. The goal past running it is the remaster the first two C&C games
+Static recompilation of **Command & Conquer: Red Alert 2** (Westwood Studios,
+2000) and its expansion **Yuri's Revenge** (2001) from their shipping Win32
+binaries, `game.exe` 1.006 and `gamemd.exe` 1.001, to native C. Both games
+build from the same install, each into its own `ra2.exe`, with the same
+remaster. The goal past running them is the remaster the first two C&C games
 got and this engine never did: higher resolutions, proper scaling and a modern
 presentation layer, built on the game's own code rather than a reimplementation.
 
@@ -62,7 +64,7 @@ for comparison.
 | High resolution / widescreen | 720p, 1080p, 1440p and 4K in game, skirmish and campaign, picked from the presenter's settings menu (F10) or `RA2MD.INI`; 4K needed a fix to RA2's own sidebar ([hires.md](docs/hires.md)) |
 | Headless mode | `--headless --record out.mp4 --frames N`: hidden window, no mode change, the primary surface recorded to ffmpeg ([host.md](docs/host.md)) |
 | Multiplayer | RA2 against RA2 over the LAN between two PCs, scripted on both sides into the game ([testing.md](docs/testing.md)) |
-| Red Alert 2 (`game.exe`) | a second target from the same install: 23,202 functions, 0 lift errors, the suite at 30 of 30, 720p to 4K, HD vehicles ([bringup.md](docs/bringup.md), section 13) |
+| Red Alert 2 (`game.exe`) | a second target from the same install: 23,201 functions, 0 lift errors, the suite at 30 of 30, 720p to 4K, HD vehicles ([bringup.md](docs/bringup.md), section 13) |
 | Compilers | MSVC (x86); clang-cl (x86) with pcrecomp #47 |
 | Conformance harness | `tools/conformance.py`: **8/8** boot milestones up to the main menu, lift 0 errors, against `conformance.json`; fails on regression |
 
@@ -109,7 +111,14 @@ score screen at the end.
 
 You need **your own copy of Red Alert 2 and Yuri's Revenge**: the Steam build
 of *Command & Conquer: Red Alert 2 and Yuri's Revenge* (the folder holding
-`gamemd.exe`). Nothing from the game is in this repository and nothing is
+`game.exe` and `gamemd.exe`). One install has both games, and both are built:
+
+| Game | Exe | Builds into | Play with |
+|---|---|---|---|
+| Red Alert 2 | `game.exe` | `build-game\ra2.exe` | `Red Alert 2 (recomp).cmd` |
+| Yuri's Revenge | `gamemd.exe` | `build\ra2.exe` | `Yuri's Revenge (recomp).cmd` |
+
+Nothing from the game is in this repository and nothing is
 downloaded for you. The lifted C is generated on your machine from your copy
 and is never distributed.
 
@@ -122,15 +131,19 @@ and is never distributed.
 It checks for Python 3.10+, the `pefile` and `capstone` packages, the pcrecomp
 toolkit, Visual Studio 2022 with the C++ x86 tools, CMake and Ninja, and
 **asks** before installing anything. It finds the game in your Steam library or
-asks for the folder, copies it into `game\`, builds the function catalog,
-lifts and builds. A rerun skips finished steps. If it stops, it says why in one
+asks for the folder and copies it into `game\`. Then, for each game, Yuri's
+Revenge first and then Red Alert 2, it builds the function catalog, lifts and
+builds. A rerun skips finished steps. If it stops, it says why in one
 sentence; the details are in `setup.log`.
 
 Setup.cmd runs exactly the commands in *Step by step*, and has been run end
 to end from a clean folder (the ZIP download).
 
-It ends with `Red Alert 2 (recomp).cmd` in this folder: double-click it to
-play. F10 opens the settings.
+It ends with `Red Alert 2 (recomp).cmd` and `Yuri's Revenge (recomp).cmd` in
+this folder: double-click either to play. F10 opens the settings.
+
+Only one of them? `Setup.cmd -Games ra2` or `Setup.cmd -Games yr` (from a
+terminal in this folder) builds just that game, in about half the time.
 
 ### Step by step
 
@@ -178,13 +191,11 @@ some-folder\
    build\ra2.exe --run
    ```
 
-### Red Alert 2 itself (`game.exe`)
-
-The same install holds Red Alert 2 without the expansion, and it builds
-the same way as a second target, into its own folders. From step 3, with
-`game.exe` and `work\game\`:
+Steps 3 to 7 are Yuri's Revenge. Red Alert 2 is the same from step 3, with
+`game.exe`, `work\game\` and `build-game\`:
 
 ```
+py -3 ..\tools\tools\pe\pe_analyze.py game\game.exe --json work\game\pe_analysis.json
 py -3 ..\tools\tools\cpp\rtti.py game\game.exe -o work\game\rtti.json --seeds work\game\rtti_seeds.json
 py -3 ..\tools\tools\disasm\disasm32.py game\game.exe -o work\game\functions.json --seed-functions work\game\rtti_seeds.json
 py -3 run_lift.py --all --target game
@@ -194,14 +205,17 @@ build.cmd
 build-game\ra2.exe --run
 ```
 
-Expected: `Functions: 23192` and `lifted 23202   not-lifted stubs 0   errors 0`.
-The presenter, hi-res to 4K, HD vehicles and the playtest suite
-(`RA2_TARGET=game`, docs/testing.md) all work on it.
+Expected: `Functions: 23191` and `lifted 23201   not-lifted stubs 0   errors 0`.
+Everything in *What the remaster adds* works on both; the playtest suite and
+conformance take `RA2_TARGET=game` (docs/testing.md).
 
 The usual trip-ups: `python` opening the Microsoft Store (that is Windows' alias;
 use `py -3`), and a PATH change that needs a new terminal window.
 
 ## Usage
+
+`build\ra2.exe` is Yuri's Revenge and `build-game\ra2.exe` Red Alert 2; they
+take the same flags.
 
 ```
 build\ra2.exe                                   # dry run: map and bind, print the entry point

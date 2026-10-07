@@ -1,12 +1,14 @@
-# One-click setup for the Red Alert 2: Yuri's Revenge static recompilation.
+# One-click setup for the Red Alert 2 and Yuri's Revenge static recompilation.
 # Run it by double-clicking Setup.cmd in the repo folder; the README's "Step by
 # step" is the same thing by hand, command for command.
 #
-# It copies your install into game\, analyses gamemd.exe, builds the function
+# It copies your install into game\, then for each game (Yuri's Revenge,
+# gamemd.exe, and Red Alert 2, game.exe) analyses the exe, builds the function
 # catalog, lifts it to C, builds the 32-bit host and leaves a shortcut. Each
 # step is skipped when its output already exists (-Force redoes them).
-# Everything it does goes to setup.log.
-param([switch]$Force, [string]$Game = "")
+# -Games yr or -Games ra2 builds only that one. Everything it does goes to
+# setup.log.
+param([switch]$Force, [string]$Game = "", [ValidateSet('both', 'yr', 'ra2')][string]$Games = 'both')
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
@@ -14,13 +16,19 @@ $Toolkit = Join-Path (Split-Path -Parent $Root) 'tools'
 $T = Join-Path $Toolkit 'tools'
 $Log = Join-Path $Root 'setup.log'
 Set-Location $Root
+$Targets = @(
+  @{ Key = 'yr'; Name = "Yuri's Revenge"; Exe = 'gamemd.exe'; Target = 'gamemd'; Work = 'work'; Gen = 'src\recomp\gen'; Build = 'build' },
+  @{ Key = 'ra2'; Name = 'Red Alert 2'; Exe = 'game.exe'; Target = 'game'; Work = 'work\game'; Gen = 'src\recomp\gen_game'; Build = 'build-game' }
+) | Where-Object { $Games -eq 'both' -or $_.Key -eq $Games }
+$Targets = @($Targets)   # one match would be a bare hashtable
+$Steps = 3 + 4 * @($Targets).Count
 # A log line that cannot be written (the log open in another program) is
 # not a reason to stop the setup.
 function Log($t) { try { Add-Content -Path $Log -Value $t -Encoding UTF8 -ErrorAction Stop } catch {} }
 Log "==== setup $(Get-Date -Format s)"
 
 function Say($t, $c = 'Gray') { Write-Host $t -ForegroundColor $c; Log $t }
-function Step($n, $t) { Write-Host ""; Say "[$n/7] $t" 'Cyan' }
+function Step($n, $t) { Write-Host ""; Say "[$n/$Steps] $t" 'Cyan' }
 function Fail($t) {
   Say "" ; Say "Setup stopped: $t" 'Red'
   Say "The details are in $Log. Fix that and run Setup.cmd again; finished steps are skipped." 'Yellow'
@@ -47,9 +55,10 @@ function Run($what, [string[]]$cmd) {
 }
 
 Clear-Host
-Say "Red Alert 2: Yuri's Revenge - static recompilation setup" 'White'
+Say "Red Alert 2 and Yuri's Revenge - static recompilation setup" 'White'
+Say "Building: $(($Targets | ForEach-Object { $_.Name }) -join ' and ')"
 Say "You need your installed copy of Red Alert 2 and Yuri's Revenge (the Steam build) and about 6 GB free."
-Say "The function catalog, the lift and the build take 30 to 60 minutes, once."
+Say "The function catalog, the lift and the build take 30 to 60 minutes per game, once."
 
 # ---------------------------------------------------------------- tools
 Step 1 "Checking the tools the pipeline needs"
@@ -116,7 +125,7 @@ foreach ($tool in @(@('cmake', 'Kitware.CMake', '30 MB'), @('ninja', 'Ninja-buil
 
 # ---------------------------------------------------------------- the game
 Step 2 "Copying your copy of Red Alert 2 into game\"
-function Is-Install([string]$d) { return ($d -and (Test-Path (Join-Path $d 'gamemd.exe'))) }
+function Is-Install([string]$d) { return ($d -and -not ($Targets | Where-Object { -not (Test-Path (Join-Path $d $_.Exe)) })) }
 function Find-Steam {
   $roots = @()
   foreach ($k in 'HKCU:\Software\Valve\Steam', 'HKLM:\SOFTWARE\WOW6432Node\Valve\Steam') {
@@ -137,7 +146,7 @@ function Find-Steam {
   return ""
 }
 
-if ((Test-Path 'game\gamemd.exe') -and -not $Force) {
+if ((Is-Install 'game') -and -not $Force) {
   Say "  Already in game\ (skipping)."
 } else {
   $Game = $Game.Trim('"', ' ')
@@ -146,56 +155,63 @@ if ((Test-Path 'game\gamemd.exe') -and -not $Force) {
     if ($Game) { Say "  Found it in your Steam library: $Game" }
   }
   while (-not (Is-Install $Game)) {
-    $Game = (Read-Host "  Paste the folder Red Alert 2 is installed in (the one with gamemd.exe)").Trim('"', ' ')
-    if (-not (Is-Install $Game)) { Say "  No gamemd.exe in that folder." 'Yellow' }
+    $Game = (Read-Host "  Paste the folder Red Alert 2 is installed in (the one with gamemd.exe and game.exe)").Trim('"', ' ')
+    if (-not (Is-Install $Game)) { Say "  No $(($Targets | ForEach-Object { $_.Exe }) -join ' and ') in that folder." 'Yellow' }
   }
   Say "  Copying $Game (about 1.9 GB)..."
   $code = Exec @('robocopy', $Game, (Join-Path $Root 'game'), '/E', '/NFL', '/NDL', '/NJH', '/NP')
   if ($code -ge 8) { Fail "copying the game failed (robocopy exit code $code)." }   # robocopy: <8 is success
 }
 
-# ---------------------------------------------------------------- analyse
-Step 3 "Analysing gamemd.exe (seconds)"
-New-Item -ItemType Directory -Force work | Out-Null
-if ((Test-Path 'work\rtti_seeds.json') -and -not $Force) { Say "  Already done (skipping)." }
-else {
-  Run "Headers and imports" ($pyargs + @("$T\pe\pe_analyze.py", 'game\gamemd.exe', '--json', 'work\pe_analysis.json'))
-  Run "C++ classes from RTTI" ($pyargs + @("$T\cpp\rtti.py", 'game\gamemd.exe', '-o', 'work\rtti.json', '--seeds', 'work\rtti_seeds.json'))
+# ---------------------------------------------------------------- each game
+# Analyse, catalog, lift and build, one game at a time, so the first is
+# playable while the second builds.
+$n = 3
+foreach ($g in $Targets) {
+  $exe = "game\$($g.Exe)"
+  Step $n "$($g.Name): analysing $($g.Exe) (seconds)"; $n++
+  New-Item -ItemType Directory -Force $g.Work | Out-Null
+  if ((Test-Path "$($g.Work)\rtti_seeds.json") -and -not $Force) { Say "  Already done (skipping)." }
+  else {
+    Run "Headers and imports" ($pyargs + @("$T\pe\pe_analyze.py", $exe, '--json', "$($g.Work)\pe_analysis.json"))
+    Run "C++ classes from RTTI" ($pyargs + @("$T\cpp\rtti.py", $exe, '-o', "$($g.Work)\rtti.json", '--seeds', "$($g.Work)\rtti_seeds.json"))
+  }
+
+  Step $n "$($g.Name): finding every function (about 15 minutes, once)"; $n++
+  if ((Test-Path "$($g.Work)\functions.json") -and -not $Force) { Say "  Already done (skipping)." }
+  else {
+    Run "Disassembling" ($pyargs + @("$T\disasm\disasm32.py", $exe, '-o', "$($g.Work)\functions.json", '--seed-functions', "$($g.Work)\rtti_seeds.json"))
+  }
+
+  Step $n "$($g.Name): lifting to C (5 to 15 minutes)"; $n++
+  if ((Test-Path "$($g.Gen)\recomp_dispatch.c") -and -not $Force) { Say "  Already done (skipping)." }
+  else {
+    $env:PCRECOMP = $Toolkit
+    Run "Lifting" ($pyargs + @('run_lift.py', '--all', '--target', $g.Target))
+  }
+
+  Step $n "$($g.Name): building $($g.Build)\ra2.exe (10 to 30 minutes)"; $n++
+  if ((Test-Path "$($g.Build)\ra2.exe") -and -not $Force) { Say "  Already done (skipping)." }
+  else {
+    $env:BUILD_DIR = $g.Build; $env:CMAKE_ARGS = "-DRA2_TARGET=$($g.Target)"
+    Run "Compiling" @('cmd', '/c', (Join-Path $Root 'build.cmd'))
+  }
 }
 
-# ---------------------------------------------------------------- catalog
-Step 4 "Finding every function (about 15 minutes, once)"
-if ((Test-Path 'work\functions.json') -and -not $Force) { Say "  Already done (skipping)." }
-else {
-  Run "Disassembling" ($pyargs + @("$T\disasm\disasm32.py", 'game\gamemd.exe', '-o', 'work\functions.json', '--seed-functions', 'work\rtti_seeds.json'))
+# ---------------------------------------------------------------- shortcuts
+Step $n "Making the shortcuts"
+foreach ($g in $Targets) {
+  $lnk = Join-Path $Root "$($g.Name) (recomp).cmd"
+  Set-Content -Path $lnk -Encoding ASCII -Value @(
+    '@echo off',
+    'rem Plays the recompiled game in its own window: settings F10, scaling F12, fullscreen F11.',
+    'cd /d "%~dp0"',
+    "start `"`" $($g.Build)\ra2.exe --run")
+  Say "  $lnk"
 }
-
-# ---------------------------------------------------------------- lift
-Step 5 "Lifting the game to C (5 to 15 minutes)"
-if ((Test-Path 'src\recomp\gen\recomp_dispatch.c') -and -not $Force) { Say "  Already done (skipping)." }
-else {
-  $env:PCRECOMP = $Toolkit
-  Run "Lifting" ($pyargs + @('run_lift.py', '--all'))
-}
-
-# ---------------------------------------------------------------- build
-Step 6 "Building build\ra2.exe (10 to 30 minutes)"
-if ((Test-Path 'build\ra2.exe') -and -not $Force) { Say "  Already done (skipping)." }
-else {
-  Run "Compiling" @('cmd', '/c', (Join-Path $Root 'build.cmd'))
-}
-
-# ---------------------------------------------------------------- shortcut
-Step 7 "Making the shortcut"
-$lnk = Join-Path $Root 'Red Alert 2 (recomp).cmd'
-Set-Content -Path $lnk -Encoding ASCII -Value @(
-  '@echo off',
-  'rem Plays the recompiled game in its own window: settings F10, scaling F12, fullscreen F11.',
-  'cd /d "%~dp0"',
-  'start "" build\ra2.exe --run')
-Say "  $lnk"
 
 Write-Host ""
-Say "Done. Double-click 'Red Alert 2 (recomp).cmd' to play." 'Green'
+$names = ($Targets | ForEach-Object { "'$($_.Name) (recomp).cmd'" }) -join ' or '
+Say "Done. Double-click $names to play." 'Green'
 Say "F10 opens the settings (scaling, fullscreen, HD vehicles, the game's resolution)."
 Read-Host "Press Enter to close" | Out-Null
