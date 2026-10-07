@@ -177,10 +177,17 @@ reasons, neither investigated yet:
   Rosetta both cost more than on an x86 PC. Which of the two is the
   bottleneck, and how much of it is the publish lock the game thread and the
   presenter share, is the first thing to measure.
-- **A player saw graphical artifacts** with them on, which are not yet
-  characterised (what is drawn wrong, and on which units). The `--original`
-  oracle and `--hd-voxels-dump` frames on Windows and under Wine, compared,
-  would say whether it is the composition, the recording, or something Wine
-  does differently.
+- **Units flashed.** With them on, a player saw units flash now and then, as
+  if lit by a light source for a moment. Not yet reproduced or explained. A
+  flash is a unit drawn differently from one picture to the next, which
+  suggests the presenter alternating between a unit's 2x pixels and its 1x
+  ones (a record that no longer matches the frame is dropped, and the unit
+  falls back to 1x), or a 2x record laid over a frame other than its own.
+  One thing to check first: since `009c8b4` the composition runs on a copy
+  of the primary taken under its lock, no longer inside the lock, so the
+  game can publish the next frame's records between the copy and the
+  composition. Whether the flashing came before that change too, and
+  whether it shows on Windows, would separate the two. `--hd-voxels-dump`
+  writes the 1x and 2x renders and composed frames to compare.
 
 When both are understood and fixed, the default can go back to on under Wine.
