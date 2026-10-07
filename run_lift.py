@@ -259,7 +259,7 @@ def targets():
     return {
         'gamemd': dict(exe=EXE, catalog=CATALOG, seeds=SEEDS, out=OUT, stats=STATS,
                        run_seeds=RUN_SEEDS, hooks=HOOKS, exe_name='gamemd.exe', ini_name='RA2MD.INI',
-                       title="Yuri's Revenge",
+                       title="Yuri's Revenge", game_frame=0x00A8ED84,
                        patches=lambda code, cs: {**sidebar_rows_patches(code, cs), **HD_VOXEL_PATCHES}),
         'game': dict(exe=os.path.join(_HERE, 'game', 'game.exe'),
                      catalog=os.path.join(_HERE, 'work', 'game', 'functions.json'),
@@ -267,7 +267,7 @@ def targets():
                      out=os.path.join(_HERE, 'src', 'recomp', 'gen_game'),
                      stats=os.path.join(_HERE, 'work', 'game', 'lift_stats.json'),
                      run_seeds=RUN_SEEDS_GAME, hooks=HOOKS_GAME, exe_name='game.exe', ini_name='RA2.INI',
-                     title='Red Alert 2',
+                     title='Red Alert 2', game_frame=0x00A40D2C,
                      # Red Alert 2's sidebar: its code at 0x0067B000..0x00683000, its
                      # height 0x0083962C and top 0x00ABCD64, the globals the same divide
                      # by 50 reads as Yuri's Revenge's does.
@@ -287,6 +287,7 @@ def write_target_header(out, name, t):
         f.write('#define RA2_INI_NAME "%s"\n' % t['ini_name'])
         f.write('#define RA2_TITLE "%s"\n' % t['title'])
         f.write('#define RA2_HOOK_DEBUGLOG_VA 0x%08Xu\n' % (debuglog[0] if debuglog else 0))
+        f.write('#define RA2_GAME_FRAME_VA 0x%08Xu   /* the game\'s frame count */\n' % t['game_frame'])
 
 
 def main():

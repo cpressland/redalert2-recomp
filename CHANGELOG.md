@@ -11,6 +11,8 @@ versions follow [SemVer](https://semver.org/).
   to know about the binary; the sidebar fix, the options object and HD
   vehicles found again by shape; the playtest suite and conformance with
   `RA2_TARGET=game`.
+- `--record`'s checksum line prints the game's own frame count, its frame
+  rate over each 10 s (bringup.md, section 13).
 - `--select` sets a slider; `RA2_PROFILE=1` samples which lifted function
   is running and prints the top 40 when the watchdog ends the run.
 - RA2 against RA2 over the LAN, scripted on both PCs (`tools/lan/`, the

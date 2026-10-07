@@ -312,3 +312,13 @@ opened its video at 3840x2160 and x264 encoded about three frames a second:
 like a game slowing with resolution. The game itself kept time; the
 recording is now at most 1280 wide, and the suite is 30 of 30.
 
+The recorder's checksum line, every 300 recorded frames (10 s), now also
+prints the game's own frame count, so its frame rate can be read off any
+recorded run. In a 1080p and a 4K skirmish both games run at the same
+rate:
+
+| | 1080p | 4K |
+|---|---|---|
+| Red Alert 2 | 63 frames a second | 70 |
+| Yuri's Revenge | 63 | 70 |
+
