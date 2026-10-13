@@ -77,6 +77,7 @@ for comparison.
 | Multiplayer | RA2 against RA2 over the LAN between two PCs, scripted on both sides into the game ([testing.md](docs/testing.md)) |
 | Native Linux (`build-linux/ra2`, pcrecomp `win32hle`) | both games as Linux programs, no Wine: the Bink movies, every menu, skirmishes, both campaigns, saves, HD vehicles; the playtest suite in Docker ([Linux, native](#linux-native)) |
 | Red Alert 2 (`game.exe`) | a second target from the same install: 23,201 functions, 0 lift errors, the suite at 30 of 30, 720p to 4K, HD vehicles ([bringup.md](docs/bringup.md), section 13) |
+| Native macOS (`build-macos/ra2`, pcrecomp `win32hle`) | both games as arm64 Mac programs, no Wine or Rosetta: the guest's memory one block of a 64-bit host's; the playtest suite at 30 of 30 for each ([macOS, native](#macos-native)) |
 | macOS and Linux, under Wine | the Windows build cross-compiled with clang-cl and xwin, played under Wine or CrossOver ([Linux and macOS](#macos-and-linux-under-wine)) |
 | Mods | a folder in `mods/`, laid over the game's without changing it, switched in game (F10, F9 on Linux) ([mods/README.md](mods/README.md)) |
 | Readable lifted C | functions named from RTTI, vtables and the game's messages, each with a header: 7,167 of Yuri's Revenge's named |
@@ -279,6 +280,29 @@ both campaigns, the loop to the score screen. Yuri's Revenge also plays its
 movies and menus in a window on an Xfce desktop. Not on this host:
 `--original` (it runs the shipping machine code on Windows), the F10
 settings menu, and a LAN game against a Windows player (untried).
+
+### macOS, native
+
+`build-macos/ra2` (Yuri's Revenge) and `build-macos-game/ra2` (Red Alert 2)
+are native Mac programs, arm64 on Apple silicon: the same lifted C and the
+same win32hle as [Linux, native](#linux-native), with no Wine, CrossOver or
+Rosetta. A Mac runs only 64-bit programs, so the guest's 32-bit memory is one
+4 GB block of the host's (pcrecomp's `runtime/win32hle/README.md`, *Guest
+memory*). The game comes from your CrossOver bottle's Steam, as for Wine
+below (`game/` a link to it).
+
+With Homebrew's `cmake ninja pkgconf sdl2 sdl2_ttf ffmpeg`, and a lift
+(`./setup.sh` makes one: on a Mac it still also builds the Wine exes):
+
+```
+./build-macos.sh                                                    # Yuri's Revenge
+BUILD_DIR=build-macos-game CMAKE_ARGS=-DRA2_TARGET=game ./build-macos.sh   # Red Alert 2
+build-macos/ra2 --run
+```
+
+The command line, the window (F11, F12), `ra2.ini` and the mods (F9) are the
+Linux host's. On an Apple silicon Mac the playtest suite passes 30 of 30 for
+each game (`tools/playtest.py` runs the native build when it is there).
 
 ### macOS and Linux, under Wine
 
