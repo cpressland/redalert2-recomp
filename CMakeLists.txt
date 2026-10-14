@@ -56,6 +56,21 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE)
   target_compile_definitions(ra2 PRIVATE RECOMP_RETADDR=0u RECOMP_LOCAL_REGS HLE_WITH_FFMPEG)
   if(CMAKE_SIZEOF_VOID_P EQUAL 4)
     target_compile_definitions(ra2 PRIVATE RECOMP_FLAT_MEMORY)
+  else()
+    # 64-bit: where the guest's 4 GB goes in the host. A fixed address lets
+    # the lifted code add a constant, not a global it reloads after every
+    # store. On a Mac 16 TB up is free on arm64 and x86-64 alike (above the
+    # executable, the shared cache and the system's heaps, below the
+    # stacks); on Linux, where some arm64 kernels give a process 512 GB, the
+    # default is wherever mmap puts it. Empty: wherever mmap puts it.
+    if(APPLE)
+      set(RA2_MEM_BASE "0x100000000000ull" CACHE STRING "host address of the guest's 4 GB (empty: anywhere)")
+    else()
+      set(RA2_MEM_BASE "" CACHE STRING "host address of the guest's 4 GB (empty: anywhere)")
+    endif()
+    if(RA2_MEM_BASE)
+      target_compile_definitions(ra2 PRIVATE RECOMP_MEM_BASE=${RA2_MEM_BASE})
+    endif()
   endif()
   set(GEN_OPT "-O2" CACHE STRING "optimisation for the generated C")
   set_source_files_properties(${GEN_SOURCES} PROPERTIES COMPILE_OPTIONS "-w;${GEN_OPT};-fno-strict-aliasing;-fwrapv")

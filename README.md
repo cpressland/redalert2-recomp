@@ -52,13 +52,14 @@ for comparison.
   with a script for each side to play a match start unattended
   (docs/testing.md).
 - **Windows, Linux and macOS**: on Windows the C runtime is linked in, so
-  there is no Visual C++ redistributable to install. On Linux the game also
-  runs **natively, with no Wine**: the same lifted C on pcrecomp's own
-  implementation of the Windows API, with SDL2 for the window and sound and
-  ffmpeg for the Bink movies ([Linux, native](#linux-native)). On macOS (and
-  Linux) the exe is cross-built with clang-cl and played under CrossOver or
-  Wine ([macOS and Linux, under Wine](#macos-and-linux-under-wine)). `--mute`
-  for silent runs.
+  there is no Visual C++ redistributable to install. On Linux and macOS the
+  game also runs **natively, with no Wine**: the same lifted C on pcrecomp's
+  own implementation of the Windows API, with SDL2 for the window and sound
+  and ffmpeg for the Bink movies ([Linux, native](#linux-native),
+  [macOS, native](#macos-native)). The exe can also be cross-built with
+  clang-cl and played under CrossOver or Wine
+  ([macOS and Linux, under Wine](#macos-and-linux-under-wine)). `--mute` for
+  silent runs.
 
 ## Status: **v0.1.0-dev, playable.** The whole game lifts with 0 errors and plays: every main-menu screen, skirmishes from setup to the score screen, and both campaigns, in the presenter or headless, checked by a scripted test suite; on Windows, natively on Linux, and under Wine and CrossOver.
 
@@ -138,7 +139,7 @@ exes are only signed differently. One install has both games, and both are built
 Nothing from the game is in this repository and nothing is
 downloaded for you. The lifted C is generated on your machine from your copy
 and is never distributed. On Linux, see [Linux, native](#linux-native); on
-macOS, [macOS and Linux, under Wine](#macos-and-linux-under-wine).
+macOS, [macOS, native](#macos-native).
 
 ### Quick start
 
@@ -288,11 +289,20 @@ are native Mac programs, arm64 on Apple silicon: the same lifted C and the
 same win32hle as [Linux, native](#linux-native), with no Wine, CrossOver or
 Rosetta. A Mac runs only 64-bit programs, so the guest's 32-bit memory is one
 4 GB block of the host's (pcrecomp's `runtime/win32hle/README.md`, *Guest
-memory*). The game comes from your CrossOver bottle's Steam, as for Wine
-below (`game/` a link to it).
+memory*), at a fixed address (`RA2_MEM_BASE`, 16 TB up) so the lifted code
+adds a constant to every address. The game is your copy: Steam for Windows
+in a CrossOver bottle, the Mac Steam library, or a folder anywhere (`game/`
+a link to it).
 
-With Homebrew's `cmake ninja pkgconf sdl2 sdl2_ttf ffmpeg`, and a lift
-(`./setup.sh` makes one: on a Mac it still also builds the Wine exes):
+```
+./setup.sh
+```
+
+checks for Xcode's command line tools and offers to install Homebrew's
+`cmake ninja pkgconf sdl2 sdl2_ttf ffmpeg uv`, finds the game, catalogs and
+lifts each game, builds it with `build-macos.sh`, and leaves `Yuri's Revenge
+(recomp).command` and `Red Alert 2 (recomp).command` here to double-click.
+By hand:
 
 ```
 ./build-macos.sh                                                    # Yuri's Revenge
@@ -314,7 +324,7 @@ install it from Steam (which runs it with Proton) or have the folder anywhere.
 Then:
 
 ```
-./setup.sh
+./setup.sh --wine
 ```
 
 On a Mac it checks for and offers to install Homebrew's `llvm`, `lld`,
